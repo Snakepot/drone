@@ -1,0 +1,98 @@
+{
+    "name" : "飞手工作台",
+    "appid" : "",
+    "description" : "无人机管理平台 · 飞手端",
+    "versionName" : "1.0.0",
+    "versionCode" : "100",
+    "transformPx" : false,
+    /* 5+App特有相关 */
+    "app-plus" : {
+        "usingComponents" : true,
+        "nvueStyleCompiler" : "uni-app",
+        "compilerVersion" : 3,
+        "splashscreen" : {
+            "alwaysShowBeforeRender" : true,
+            "waiting" : true,
+            "autoclose" : true,
+            "delay" : 0
+        },
+        /* 模块配置 */
+        "modules" : {},
+        /* 应用发布信息 */
+        "distribute" : {
+            /* android打包配置 */
+            "android" : {
+                "permissions" : [
+                    "<uses-permission android:name=\"android.permission.CHANGE_NETWORK_STATE\"/>",
+                    "<uses-permission android:name=\"android.permission.MOUNT_UNMOUNT_FILESYSTEMS\"/>",
+                    "<uses-permission android:name=\"android.permission.VIBRATE\"/>",
+                    "<uses-permission android:name=\"android.permission.READ_LOGS\"/>",
+                    "<uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\"/>",
+                    "<uses-feature android:name=\"android.hardware.camera.autofocus\"/>",
+                    "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\"/>",
+                    "<uses-permission android:name=\"android.permission.CAMERA\"/>",
+                    "<uses-permission android:name=\"android.permission.GET_ACCOUNTS\"/>",
+                    "<uses-permission android:name=\"android.permission.READ_PHONE_STATE\"/>",
+                    "<uses-permission android:name=\"android.permission.CHANGE_WIFI_STATE\"/>",
+                    "<uses-permission android:name=\"android.permission.WAKE_LOCK\"/>",
+                    "<uses-permission android:name=\"android.permission.FLASHLIGHT\"/>",
+                    "<uses-feature android:name=\"android.hardware.camera\"/>",
+                    "<uses-permission android:name=\"android.permission.WRITE_SETTINGS\"/>"
+                ]
+            },
+            /* ios打包配置 */
+            "ios" : {},
+            /* SDK配置 */
+            "sdkConfigs" : {}
+        }
+    },
+    /* 快应用特有相关 */
+    "quickapp" : {},
+    /* 小程序特有相关 */
+    "mp-weixin" : {
+        /* 微信小程序的 appid 要填你自己的（微信公众平台 → 开发管理 → 开发设置）。
+           留空时微信开发者工具会以「测试号」打开，仅本地调试可用，不能真机预览。 */
+        "appid" : "wxbde16c4ac38b0500",
+        "setting" : {
+            "urlCheck" : false
+        },
+        "usingComponents" : true,
+        /* ⚠️ 定位必须有下面这两项，缺一不可：
+           ① permission.scope.userLocation.desc —— 授权弹窗里那句说明。
+              缺了它 wx.getLocation 直接失败（连授权弹窗都不弹），
+              而失败信息只说「需要 scope.userLocation」，很容易以为是用户没授权。
+           ② requiredPrivateInfos —— 2022-07-14 起的微信新规：定位类接口**必须**
+              在这个白名单里声明，否则调用直接报
+              「the api need to be declared in the requiredPrivateInfos field in app.json」。
+              只声明用得到的（getLocation）—— 多声明会拖长审核。
+           ⚠️ 还有第三处不在这里：**微信公众平台 → 开发管理 → 接口设置 → 用户地理位置**
+              要申请开通（2022-07-14 之后注册的小程序默认没有这个权限），
+              没开通时接口返回 errno 112。那是账号级的设置，改代码改不出来。 */
+        "permission" : {
+            "scope.userLocation" : {
+                "desc" : "用于在任务地图上显示你的位置，并计算你与目标点位的距离"
+            }
+        },
+        "requiredPrivateInfos" : [ "getLocation" ]
+    },
+    "mp-alipay" : {
+        "usingComponents" : true
+    },
+    "mp-baidu" : {
+        "usingComponents" : true
+    },
+    "mp-toutiao" : {
+        "usingComponents" : true
+    },
+    "h5" : {
+        /* H5 预览里 `uni.getLocation` **需要配 H5 地图 key 才存在**（uni 的实现依赖地图 SDK）：
+           在这里补 "sdkConfigs": { "maps": { "qqmap": { "key": "你的腾讯地图 key" } } } 才有。
+           没配时页面会走 navigator.geolocation 的兜底分支（见 pages/task/detail.vue 的 getLocation）
+           —— 那是浏览器定位，给的是 WGS84，接口也收（coordinateSystem 字段）。 */
+        "sdkConfigs" : {}
+    },
+    "uniStatistics" : {
+        "enable" : false
+    },
+    "vueVersion" : "3"
+}

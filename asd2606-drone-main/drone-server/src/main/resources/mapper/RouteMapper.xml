@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.route.dao.RouteDao">
+
+    <sql id="routeColumns">
+        r.id, r.name, r.description, r.point_count, r.distance_m,
+        r.create_by, r.create_by_name, r.create_time, r.update_time
+    </sql>
+
+    <sql id="routeCondition">
+        <where>
+            <if test="keyword != null and keyword != ''">
+                AND r.name LIKE CONCAT('%', #{keyword}, '%')
+            </if>
+        </where>
+    </sql>
+
+    <!-- 最新建的排前面（和任务列表一致）；id 兜底保证分页顺序稳定 -->
+    <select id="selectByCondition" resultType="cn.tedu.drone.route.pojo.RoutePO">
+        SELECT <include refid="routeColumns"/>
+        FROM `route` r
+        <include refid="routeCondition"/>
+        ORDER BY r.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByCondition" resultType="long">
+        SELECT COUNT(*)
+        FROM `route` r
+        <include refid="routeCondition"/>
+    </select>
+
+    <select id="selectById" resultType="cn.tedu.drone.route.pojo.RoutePO">
+        SELECT <include refid="routeColumns"/>
+        FROM `route` r
+        WHERE r.id = #{id}
+    </select>
+
+    <!--
+      按 seq 排序是这条查询的全部意义 —— 航点的顺序就是飞行顺序，
+      取出来乱了就等于航线错了。同 seq（理论上不该有）再按 id 兜底。
+    -->
+    <select id="selectPointsByRouteId" resultType="cn.tedu.drone.route.pojo.RoutePointPO">
+        SELECT id, route_id, seq, lng, lat, alt, action, hover_seconds, point_id
+        FROM `route_point`
+        WHERE route_id = #{routeId}
+        ORDER BY seq, id
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `route` (name, description, point_count, distance_m, create_by, create_by_name)
+        VALUES (#{name}, #{description}, #{pointCount}, #{distanceM}, #{createBy}, #{createByName})
+    </insert>
+
+    <!--
+      航线本体：**整份覆盖**，不是「按非空字段拼」。
+      编辑表单本来就会带上完整的四项，用 <set><if> 反而会让「清空说明」失效 ——
+      传空串进来被当成 null、被 <if> 跳过，用户看到的是「保存成功，说明还在」。
+      （设备模块用的是动态拼法，那边没有可清空的文本字段，所以不冲突。）
+    -->
+    <update id="update">
+        UPDATE `route`
+        SET name        = #{name},
+            description = #{description},
+            point_count = #{pointCount},
+            distance_m  = #{distanceM}
+        WHERE id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM `route` WHERE id = #{id}
+    </delete>
+
+    <delete id="deletePointsByRouteId">
+        DELETE FROM `route_point` WHERE route_id = #{routeId}
+    </delete>
+
+    <!-- 批量插入航点；调用方需保证非空 -->
+    <insert id="insertPoints">
+        INSERT INTO `route_point` (route_id, seq, lng, lat, alt, action, hover_seconds, point_id)
+        VALUES
+        <foreach collection="list" item="p" separator=",">
+            (#{p.routeId}, #{p.seq}, #{p.lng}, #{p.lat}, #{p.alt},
+             #{p.action}, #{p.hoverSeconds}, #{p.pointId})
+        </foreach>
+    </insert>
+
+</mapper>

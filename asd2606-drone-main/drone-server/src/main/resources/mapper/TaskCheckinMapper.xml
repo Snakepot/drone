@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.task.dao.TaskCheckinDao">
+
+    <!-- INSERT IGNORE：撞唯一键（任务+航点+时刻）时不报错、也不插，返回 0 -->
+    <insert id="insertIgnore" useGeneratedKeys="true" keyProperty="id">
+        INSERT IGNORE INTO `task_checkin`
+            (task_id, seq, target_lng, target_lat, lng, lat,
+             accuracy_m, deviation_m, observed_at, reported_at,
+             reporter_id, reporter_name, remark)
+        VALUES
+            (#{taskId}, #{seq}, #{targetLng}, #{targetLat}, #{lng}, #{lat},
+             #{accuracyM}, #{deviationM}, #{observedAt}, #{reportedAt},
+             #{reporterId}, #{reporterName}, #{remark})
+    </insert>
+
+    <!--
+      按航点序号再按时刻排：飞手端要按航线的顺序展示「第 1 个点、第 2 个点……」，
+      同一个点打过多次卡（去过两趟）时按时间先后列出来。
+    -->
+    <select id="selectByTaskId" resultType="cn.tedu.drone.task.pojo.TaskCheckinPO">
+        SELECT id, task_id, seq, target_lng, target_lat, lng, lat,
+               accuracy_m, deviation_m, observed_at, reported_at,
+               reporter_id, reporter_name, remark, create_time
+        FROM `task_checkin`
+        WHERE task_id = #{taskId}
+        ORDER BY seq, observed_at, id
+    </select>
+
+    <!-- 不同航点数：同一个点打多次只算一个（进度条要的是「覆盖了几个点位」） -->
+    <select id="countDistinctPoints" resultType="int">
+        SELECT COUNT(DISTINCT seq)
+        FROM `task_checkin`
+        WHERE task_id = #{taskId}
+    </select>
+
+</mapper>

@@ -1,0 +1,11 @@
+# 冗余压缩包（项目已解压为 asd2606-drone-main/，无需入库）
+asd2606-drone-main.zip
+
+# 学习笔记（个人 ASD 学习记录，不入库）
+ASD2606.md
+asd2606-drone-main/ASD2606-SaaS平台.md
+
+# 系统
+.DS_Store
+Thumbs.db
+~$*

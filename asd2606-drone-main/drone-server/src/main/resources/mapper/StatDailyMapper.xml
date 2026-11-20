@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.analytics.dao.StatDailyDao">
+
+    <!-- 批量 upsert。
+         用 8.0.19+ 的 `AS new` 别名写法，而不是已被标记废弃的 VALUES(value)：
+         两者都能跑，但后者在新版本里会报 deprecation 警告，日志里很吵 -->
+    <insert id="upsertBatch">
+        INSERT INTO `stat_daily` (stat_date, metric, dimension, value, caliber_version)
+        VALUES
+        <foreach collection="rows" item="row" separator=",">
+            (#{row.statDate}, #{row.metric}, #{row.dimension}, #{row.value}, #{row.caliberVersion})
+        </foreach>
+        AS new
+        ON DUPLICATE KEY UPDATE value = new.value
+    </insert>
+
+    <!-- 重算一天的第一步：把这天这个口径下的所有指标行删掉（见 DAO 注释的「先删后插」） -->
+    <delete id="deleteByDay">
+        DELETE FROM `stat_daily`
+        WHERE stat_date = #{statDate}
+          AND caliber_version = #{caliberVersion}
+    </delete>
+
+    <!-- 区间内每天每个指标的合计。一次查多个指标，然后按「天 + 指标」分组 -->
+    <select id="selectDailyTotals" resultType="java.util.Map">
+        SELECT s.stat_date AS statDate,
+               s.metric    AS metric,
+               SUM(s.value) AS total
+        FROM `stat_daily` s
+        WHERE s.metric IN
+        <foreach collection="metrics" item="metric" open="(" separator="," close=")">
+            #{metric}
+        </foreach>
+          AND s.caliber_version = #{caliberVersion}
+          AND s.stat_date &gt;= #{from}
+          AND s.stat_date &lt;= #{to}
+        GROUP BY s.stat_date, s.metric
+    </select>
+
+    <!-- 已经算过的日期（只问有没有，不问值）。走 uk_stat_daily 的第一列 -->
+    <select id="selectComputedDates" resultType="java.time.LocalDate">
+        SELECT DISTINCT s.stat_date
+        FROM `stat_daily` s
+        WHERE s.metric = #{metric}
+          AND s.caliber_version = #{caliberVersion}
+          AND s.stat_date &gt;= #{from}
+          AND s.stat_date &lt;= #{to}
+        ORDER BY s.stat_date
+    </select>
+
+</mapper>

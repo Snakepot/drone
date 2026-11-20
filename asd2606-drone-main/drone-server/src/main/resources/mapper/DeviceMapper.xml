@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.device.dao.DeviceDao">
+
+    <sql id="deviceColumns">
+        d.id, d.code, d.name, d.model, d.type, d.purchase_date, d.location,
+        d.status, d.flight_count, d.flight_hours, d.create_time, d.update_time
+    </sql>
+
+    <!--
+      可复用的查询条件。
+      列表查询、计数、导出三处共用同一份，避免两处条件写歪导致「看到的和导出的对不上」。
+      注意这里用 d 作为表别名，调用方的 FROM 子句必须带同样的别名。
+    -->
+    <sql id="deviceCondition">
+        <where>
+            <if test="keyword != null and keyword != ''">
+                AND (d.code LIKE CONCAT('%', #{keyword}, '%')
+                    OR d.name LIKE CONCAT('%', #{keyword}, '%')
+                    OR d.model LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+            <if test="type != null and type != ''">
+                AND d.type = #{type}
+            </if>
+            <if test="status != null and status != ''">
+                AND d.status = #{status}
+            </if>
+        </where>
+    </sql>
+
+    <!-- offset / limit 由 DeviceQueryParam 的 getOffset() / getLimit() 提供，内部已做非法值兜底 -->
+    <select id="selectByCondition" resultType="cn.tedu.drone.device.pojo.DevicePO">
+        SELECT <include refid="deviceColumns"/>
+        FROM `drone` d
+        <include refid="deviceCondition"/>
+        ORDER BY d.id
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByCondition" resultType="long">
+        SELECT COUNT(*)
+        FROM `drone` d
+        <include refid="deviceCondition"/>
+    </select>
+
+    <select id="selectById" resultType="cn.tedu.drone.device.pojo.DevicePO">
+        SELECT <include refid="deviceColumns"/>
+        FROM `drone` d
+        WHERE d.id = #{id}
+    </select>
+
+    <select id="selectByCode" resultType="cn.tedu.drone.device.pojo.DevicePO">
+        SELECT <include refid="deviceColumns"/>
+        FROM `drone` d
+        WHERE d.code = #{code}
+        LIMIT 1
+    </select>
+
+    <select id="selectCodes" resultType="java.lang.String">
+        SELECT code FROM `drone`
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `drone` (code, name, model, type, purchase_date, location,
+                             status, flight_count, flight_hours)
+        VALUES (#{code}, #{name}, #{model}, #{type}, #{purchaseDate}, #{location},
+                #{status}, #{flightCount}, #{flightHours})
+    </insert>
+
+    <!-- 批量插入；调用方需保证非空，否则会拼出语法错误的 SQL -->
+    <insert id="insertBatch" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `drone` (code, name, model, type, purchase_date, location,
+                             status, flight_count, flight_hours)
+        VALUES
+        <foreach collection="list" item="d" separator=",">
+            (#{d.code}, #{d.name}, #{d.model}, #{d.type}, #{d.purchaseDate}, #{d.location},
+             #{d.status}, #{d.flightCount}, #{d.flightHours})
+        </foreach>
+    </insert>
+
+    <!-- 按非空字段更新。<set> 标签会自动去掉多余的逗号；刻意不含 code -->
+    <update id="update">
+        UPDATE `drone`
+        <set>
+            <if test="name != null">name = #{name},</if>
+            <if test="model != null">model = #{model},</if>
+            <if test="type != null">type = #{type},</if>
+            <if test="purchaseDate != null">purchase_date = #{purchaseDate},</if>
+            <if test="location != null">location = #{location},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="flightCount != null">flight_count = #{flightCount},</if>
+            <if test="flightHours != null">flight_hours = #{flightHours},</if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <!--
+      比较并交换（CAS）：只有当前值等于预期值才改。
+      AND status = #{expectStatus} 是重点 —— 少了它就成了无条件覆盖，
+      会把别人刚设好的「维护中」冲掉。
+    -->
+    <update id="updateStatusIfMatch">
+        UPDATE `drone`
+        SET status = #{newStatus}
+        WHERE id = #{id}
+          AND status = #{expectStatus}
+    </update>
+
+
+    <!-- 大屏：设备按状态分布 -->
+    <select id="countGroupByStatus" resultType="java.util.Map">
+        SELECT d.status AS status, COUNT(*) AS cnt
+        FROM `drone` d
+        GROUP BY d.status
+    </select>
+
+    <!--
+      大屏：累计架次与时长。
+      flight_count / flight_hours 在表里是 varchar（历史原因），**必须显式 CAST** ——
+      不然 SUM 会按字符串加，结果静默地离谱（'10'+'20'='1020'）。
+      hours 用 decimal 两位，和表里的精度一致。
+    -->
+    <select id="sumFlightStats" resultType="java.util.Map">
+        SELECT COUNT(*)                                   AS deviceCount,
+               COALESCE(SUM(CAST(d.flight_count AS SIGNED)), 0)      AS flights,
+               COALESCE(SUM(CAST(d.flight_hours AS DECIMAL(12, 2))), 0) AS hours
+        FROM `drone` d
+    </select>
+
+</mapper>

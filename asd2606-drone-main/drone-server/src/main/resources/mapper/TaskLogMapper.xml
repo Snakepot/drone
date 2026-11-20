@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.task.dao.TaskLogDao">
+
+    <!-- 只有追加，没有更新和删除：流水表一旦写入就不再变动 -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO task_log (task_id, action, from_status, to_status,
+                              operator_id, operator_name, operator_role, note)
+        VALUES (#{taskId}, #{action}, #{fromStatus}, #{toStatus},
+                #{operatorId}, #{operatorName}, #{operatorRole}, #{note})
+    </insert>
+
+    <select id="selectByTaskId" resultType="cn.tedu.drone.task.pojo.TaskLogPO">
+        SELECT id, task_id, action, from_status, to_status,
+               operator_id, operator_name, operator_role, note, create_time
+        FROM task_log
+        WHERE task_id = #{taskId}
+        ORDER BY id
+    </select>
+
+</mapper>

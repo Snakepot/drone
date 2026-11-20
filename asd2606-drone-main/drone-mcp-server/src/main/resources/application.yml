@@ -1,0 +1,31 @@
+server:
+  port: 8082
+  # 只供本机/同宿主的 drone-agent 调用。生产部署若必须跨主机，请用内网地址 + TLS，
+  # 并且不要把本服务暴露到公网——它会把收到的 Authorization 转发给 drone-server。
+  address: ${MCP_BIND_ADDRESS:127.0.0.1}
+
+spring:
+  application:
+    name: drone-mcp-server
+  mvc:
+    # JSON-RPC 对非法 JSON 要自己回 -32700，不希望被 Spring 的默认错误页接管
+    throw-exception-if-no-handler-found: false
+
+drone:
+  mcp-server:
+    # drone-server 的公开业务接口地址
+    upstream-url: ${DRONE_SERVER_URL:http://localhost:8080}
+    # 单次上游调用超时。调用链上的三道闸必须递增：
+    # 本值(10s) < agent 的 request-timeout(12s) < 编排层 invoke-timeout(15s)
+    upstream-timeout: 10s
+    # 单个工具结果的上限，超出截断（agent 侧还有自己的压缩与预算）
+    max-response-bytes: 204800
+    # 打印原始报文：MCP 请求/响应、转发给 drone-server 的请求体、上游响应体。
+    # 排障用，报文含业务数据；生产建议 false。Authorization 请求头任何情况下都不会打印。
+    log-raw-payload: ${MCP_LOG_RAW_PAYLOAD:true}
+    refresh:
+      # 启动后是否后台拉一次 OpenAPI 对照。关闭也不影响启动与调用。
+      enabled: ${MCP_REFRESH_ENABLED:true}
+      openapi-url: ${DRONE_OPENAPI_URL:${DRONE_SERVER_URL:http://localhost:8080}/v3/api-docs}
+      retries: 3
+      delay: 5s

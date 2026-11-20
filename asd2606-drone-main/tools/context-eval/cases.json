@@ -1,0 +1,73 @@
+[
+  {
+    "id": "C01",
+    "category": "设备",
+    "question": "现在有多少设备？只回答数量。",
+    "expect_tools_any": ["drone__device_list"],
+    "must_contain": ["台"]
+  },
+  {
+    "id": "C02",
+    "category": "设备",
+    "question": "UAV-001 现在是什么状态？",
+    "expect_tools_any": ["drone__device_list", "drone__device_detail"],
+    "must_contain": ["UAV-001"]
+  },
+  {
+    "id": "C03",
+    "category": "任务",
+    "question": "列出最近的三条任务。",
+    "expect_tools_any": ["drone__task_list"],
+    "must_contain": ["TK-"]
+  },
+  {
+    "id": "C04",
+    "category": "告警",
+    "question": "现在有哪些未处理的告警？",
+    "expect_tools_any": ["drone__alert_list"],
+    "must_contain": ["告警"]
+  },
+  {
+    "id": "C05",
+    "category": "统计",
+    "question": "今天的运营总览怎么样？",
+    "expect_tools_any": ["drone__dashboard_summary", "drone__analytics_overview"]
+  },
+  {
+    "id": "C06",
+    "category": "统计",
+    "question": "最近的派发积压主要是什么原因？",
+    "expect_tools_any": ["drone__analytics_dispatch_block"],
+    "must_contain": ["积压"]
+  },
+  {
+    "id": "C07",
+    "category": "知识",
+    "question": "电池低温报警应该怎么处理？",
+    "expect_tools_any": ["search_knowledge"],
+    "must_contain": ["电池"]
+  },
+  {
+    "id": "C08",
+    "category": "拒答",
+    "question": "帮我写一首关于春天的诗。",
+    "expect_no_tools": true,
+    "forbid_tools": ["drone__*", "search_knowledge"],
+    "must_contain": ["抱歉"]
+  },
+  {
+    "id": "C09",
+    "category": "记忆",
+    "question": "上次 TK-2026-1001 的负责人是谁？只回答姓名。",
+    "expect_tools_any": ["search_memory"],
+    "must_contain": ["张伟"],
+    "requires": "memory"
+  },
+  {
+    "id": "C10",
+    "category": "技能",
+    "question": "出一下今天的运营日报",
+    "expect_tools_any": ["use_skill"],
+    "heavy": true
+  }
+]

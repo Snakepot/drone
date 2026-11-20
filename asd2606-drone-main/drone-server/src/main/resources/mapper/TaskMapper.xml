@@ -1,0 +1,456 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.task.dao.TaskDao">
+
+    <sql id="taskColumns">
+        t.id, t.task_no, t.task_name, t.priority, t.status,
+        t.plan_start_time, t.plan_end_time, t.actual_start_time, t.actual_end_time,
+        t.drone_id, t.drone_code, t.pilot_id, t.pilot_name,
+        t.route_info, t.description, t.create_by, t.create_by_name,
+        t.route_id, t.takeoff_lng, t.takeoff_lat, t.takeoff_name,
+        t.evidence_state, t.evidence_type, t.evidence_at,
+        t.create_time, t.update_time
+    </sql>
+
+    <!--
+      航线快照单独一列、单独一个片段，**只有按 id 查详情时才带上**。
+      它是一整段 JSON（一条航线几十个点，几 KB），列表页一次取 10~200 行，
+      带上它纯属白读 —— 而且没有任何一个 VO 字段会用到它
+      （TaskVO 里刻意没有 route_snapshot，所以 BeanUtils 也搬不走它）。
+      查询里写成「<include refid="taskColumns"/>,<include .../>」，中间补个逗号。
+    -->
+    <sql id="taskSnapshotColumn">
+        t.route_snapshot
+    </sql>
+
+    <!--
+      可复用的查询条件。
+      列表与计数共用同一份 —— 两处条件写歪了，就会出现
+      「总数说有 10 条、翻页却发现只有 8 条」这种对不上的情况。
+    -->
+    <sql id="taskCondition">
+        <where>
+            <if test="keyword != null and keyword != ''">
+                AND (t.task_no LIKE CONCAT('%', #{keyword}, '%')
+                    OR t.task_name LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+            <if test="status != null and status != ''">
+                AND t.status = #{status}
+            </if>
+            <if test="priority != null and priority != ''">
+                AND t.priority = #{priority}
+            </if>
+            <if test="pilotId != null">
+                AND t.pilot_id = #{pilotId}
+            </if>
+            <!-- 实际结束时间区间：给「下钻」用（见 docs/业务分析方案.md 三点五）——
+                 分析页那些按时间口径算出来的数都是按它落窗的，列表按同一列筛才对得上。
+                 左闭右开，与那些数的区间口径保持一致 -->
+            <if test="endFrom != null">
+                AND t.actual_end_time &gt;= #{endFrom}
+            </if>
+            <if test="endTo != null">
+                AND t.actual_end_time &lt; #{endTo}
+            </if>
+        </where>
+    </sql>
+
+    <!-- 最新创建的排在前面：任务列表按时间倒序更符合直觉 -->
+    <select id="selectByCondition" resultType="cn.tedu.drone.task.pojo.TaskPO">
+        SELECT <include refid="taskColumns"/>
+        FROM `task` t
+        <include refid="taskCondition"/>
+        ORDER BY t.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByCondition" resultType="long">
+        SELECT COUNT(*)
+        FROM `task` t
+        <include refid="taskCondition"/>
+    </select>
+
+    <select id="selectById" resultType="cn.tedu.drone.task.pojo.TaskPO">
+        SELECT <include refid="taskColumns"/>,<include refid="taskSnapshotColumn"/>
+        FROM `task` t
+        WHERE t.id = #{id}
+    </select>
+
+    <select id="selectByTaskNo" resultType="cn.tedu.drone.task.pojo.TaskPO">
+        SELECT <include refid="taskColumns"/>
+        FROM `task` t
+        WHERE t.task_no = #{taskNo}
+        LIMIT 1
+    </select>
+
+    <!-- 取当天已生成的最大编号，用于推导下一个序号 -->
+    <select id="selectMaxTaskNo" resultType="java.lang.String">
+        SELECT MAX(task_no)
+        FROM `task`
+        WHERE task_no LIKE CONCAT(#{prefix}, '%')
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `task` (task_no, task_name, priority, status,
+                            plan_start_time, plan_end_time, route_info, description,
+                            route_id, route_snapshot, takeoff_lng, takeoff_lat, takeoff_name,
+                            create_by, create_by_name)
+        VALUES (#{taskNo}, #{taskName}, #{priority}, #{status},
+                #{planStartTime}, #{planEndTime}, #{routeInfo}, #{description},
+                #{routeId}, #{routeSnapshot}, #{takeoffLng}, #{takeoffLat}, #{takeoffName},
+                #{createBy}, #{createByName})
+    </insert>
+
+    <!-- ================================================================
+         派发 / 撤回
+         ================================================================ -->
+
+    <!--
+      派发：飞手、设备、状态一次改完。
+      不写 update_time —— 表上有 ON UPDATE CURRENT_TIMESTAMP，数据库自己会维护。
+    -->
+    <update id="updateDispatch">
+        UPDATE `task`
+        SET pilot_id    = #{pilotId},
+            pilot_name  = #{pilotName},
+            drone_id    = #{droneId},
+            drone_code  = #{droneCode},
+            status      = #{status}
+        WHERE id = #{taskId}
+    </update>
+
+    <!--
+      撤回派发 / 超时释放：显式写 = NULL 才能真清空。
+      如果照搬「按非空字段更新」的动态 <if> 写法，传进来的 null 会被当成
+      「这个字段不用改」直接跳过，结果就是撤回后飞手还挂在任务上。
+
+      AND status = #{expectStatus} 是比较并交换：只有当前确实是指定状态才改。
+      定时释放任务和管理员手工撤回可能同时发生，这个条件保证只有一个能生效，
+      另一个拿到 0 行、跳过后续的资源释放。
+    -->
+    <update id="clearDispatch">
+        UPDATE `task`
+        SET pilot_id   = NULL,
+            pilot_name = NULL,
+            drone_id   = NULL,
+            drone_code = NULL,
+            status     = #{newStatus}
+        WHERE id = #{taskId}
+          AND status = #{expectStatus}
+    </update>
+
+    <!--
+      开始执行：只动状态、实际开始时间、证据状态三列，指派关系保留（人正在飞）。
+      AND status = 'dispatched' 是比较并交换，防止有人抢先改了状态。
+
+      evidence_state 在这里从 none 变成 declared —— 「飞手点了开始」这件事本身
+      就是一次声明，声明落库的时刻就是它最有价值的地方：之后有没有客观数据来佐证，
+      全靠它和 task_evidence 对账。注意这里只写 declared 而不是 confirmed：
+      自己说自己不算证实，详见 docs/任务业务设计.md 第十章。
+    -->
+    <update id="markStarted">
+        UPDATE `task`
+        SET status            = 'executing',
+            actual_start_time = #{actualStartTime},
+            evidence_state    = 'declared'
+        WHERE id = #{taskId}
+          AND status = 'dispatched'
+    </update>
+
+    <!--
+      完成 / 标记失败：和 markStarted 同一个形状 —— 条件更新（CAS）。
+
+      为什么不是普通的 UPDATE：`AND status = 'executing'` 让「判断状态」和「改状态」
+      变成同一条语句，中间没有窗口。万一别的流程抢先改过（比如定时任务释放了它），
+      这里会返回 0 行，调用方据此**放弃后续的资源释放** ——
+      否则会出现「任务没完成，但设备已经被放回待命」这种对不上的状态。
+
+      完成**不清空指派关系**（不用 clearDispatch）：报告要写清「是谁飞的、
+      用哪架飞的」，清空了报告就成了无主之物。设备与飞手的状态由 Service 单独释放。
+    -->
+    <update id="markFinished">
+        UPDATE `task`
+        SET status          = 'finished',
+            actual_end_time = #{actualEndTime}
+        WHERE id = #{taskId}
+          AND status = 'executing'
+    </update>
+
+    <update id="markFailed">
+        UPDATE `task`
+        SET status          = 'failed',
+            actual_end_time = #{actualEndTime}
+        WHERE id = #{taskId}
+          AND status = 'executing'
+    </update>
+
+    <!--
+      超时释放的扫描：派发出去了，但计划结束时间早过了还没开工。
+
+      只扫 dispatched —— executing 是「真的在飞」，不在自动释放的范围内
+      （见 docs/task-design.md 9.5），所以这里的 IN 只有一个值也照写，
+      以后要扩展成「执行超时告警」时改这里一眼能看见。
+
+      deadline 由 Java 传进来而不是用 SQL 的 NOW()：
+      mysqld 的时区是 UTC，plan_end_time 存的是应用写入的本地时间，
+      两边差 8 小时，用 NOW() 比会把所有任务都提前 8 小时判超时。
+    -->
+    <select id="selectExpiredDispatched" resultType="cn.tedu.drone.task.pojo.TaskPO">
+        SELECT <include refid="taskColumns"/>
+        FROM `task` t
+        WHERE t.status IN ('dispatched')
+          AND t.plan_end_time &lt; #{deadline}
+        ORDER BY t.id
+        LIMIT #{limit}
+    </select>
+
+    <!--
+      时间窗冲突检查：把冲突的那条任务查出来。
+      只算「已派发 / 执行中」：待派发的还没占资源，终态任务早已释放资源。
+      重叠判定：已有任务开始 < 新任务结束 且 已有任务结束 > 新任务开始
+      （两端相接不算冲突）。plan_start_time / plan_end_time 创建时必填，不会是 NULL。
+
+      返回任务本体而不是 COUNT(*)，是为了报错时能报出「撞的是哪条任务」。
+      ORDER BY id LIMIT 1：真有多条冲突时挑最早那条报，报一条对用户已经够了。
+
+      注意状态这里写死字面量而不是引用 TaskStatusFlow 常量 ——
+      Mapper 是 SQL 文件，注入 Java 常量会让 SQL 反而不直观；
+      代价是改动状态取值时要记得这里也改，所以状态机在 TaskStatusFlow 里集中说明过一次。
+    -->
+    <select id="selectPilotConflict" resultType="cn.tedu.drone.task.pojo.TaskPO">
+        SELECT <include refid="taskColumns"/>
+        FROM `task` t
+        WHERE t.pilot_id = #{pilotId}
+          AND t.status IN ('dispatched', 'executing')
+          AND t.plan_start_time &lt; #{planEndTime}
+          AND t.plan_end_time &gt; #{planStartTime}
+        ORDER BY t.id
+        LIMIT 1
+    </select>
+
+    <select id="selectDroneConflict" resultType="cn.tedu.drone.task.pojo.TaskPO">
+        SELECT <include refid="taskColumns"/>
+        FROM `task` t
+        WHERE t.drone_id = #{droneId}
+          AND t.status IN ('dispatched', 'executing')
+          AND t.plan_start_time &lt; #{planEndTime}
+          AND t.plan_end_time &gt; #{planStartTime}
+        ORDER BY t.id
+        LIMIT 1
+    </select>
+
+    <!--
+      时间窗内已被占住的飞手/设备（去重）。
+      重叠条件与 selectPilotConflict / selectDroneConflict **完全一致**：
+      已有任务开始 < 我结束 且 已有任务结束 > 我开始（两端相接不算冲突）。
+      只算 dispatched / executing：待派发的还没占资源，终态的早释放了。
+    -->
+    <select id="countConflictingPilots" resultType="long">
+        SELECT COUNT(DISTINCT t.pilot_id)
+        FROM `task` t
+        WHERE t.status IN ('dispatched', 'executing')
+          AND t.pilot_id IS NOT NULL
+          AND t.plan_start_time &lt; #{planEndTime}
+          AND t.plan_end_time &gt; #{planStartTime}
+    </select>
+
+    <select id="countConflictingDrones" resultType="long">
+        SELECT COUNT(DISTINCT t.drone_id)
+        FROM `task` t
+        WHERE t.status IN ('dispatched', 'executing')
+          AND t.drone_id IS NOT NULL
+          AND t.plan_start_time &lt; #{planEndTime}
+          AND t.plan_end_time &gt; #{planStartTime}
+    </select>
+
+    <!--
+      飞手手上还剩几个没结束的任务。
+      不看时间段 —— 撤回派发时用它决定「要不要把飞手的在线状态改回空闲」：
+      手上还有别的活，就不能改回空闲。
+    -->
+    <select id="countActiveByPilot" resultType="long">
+        SELECT COUNT(*)
+        FROM `task`
+        WHERE pilot_id = #{pilotId}
+          AND status IN ('dispatched', 'executing')
+    </select>
+
+    <!--
+      按权限找用户：把通知推给「该管这事的人」。
+      以 uid 去重，同一个人挂多个角色时只出现一次（否则会收到多条重复通知）。
+
+      条件里的 u.status = '1' 与 r.status = 1 都不能少：
+      前者是账号没被禁用，后者是角色本身没被禁用。
+    -->
+    <select id="selectUserIdsByPermission" resultType="java.lang.Long">
+        SELECT DISTINCT u.id
+        FROM `user` u
+        JOIN user_role ur         ON ur.user_id = u.id
+        JOIN `role` r             ON r.id = ur.role_id AND r.status = 1
+        JOIN role_permission rp   ON rp.role_id = r.id
+        JOIN permission p         ON p.id = rp.permission_id
+        WHERE u.status = '1'
+          AND p.code = #{permissionCode}
+        ORDER BY u.id
+    </select>
+
+    <!--
+      派发下拉的飞手候选：启用 + 拥有启用状态的 pilot 角色。
+      label 在 SQL 里拼好（姓名 · 手机号），重名也能区分。
+      r.status = 1 是必须的：角色本身被禁用后，挂在它名下的人不该再被派活。
+    -->
+    <select id="selectDispatchablePilots" resultType="cn.tedu.drone.task.pojo.TaskDispatchOptionVO">
+        SELECT DISTINCT u.id AS id,
+                        CONCAT(u.name, ' · ', u.username) AS label
+        FROM `user` u
+        JOIN user_role ur ON ur.user_id = u.id
+        JOIN `role` r     ON r.id = ur.role_id AND r.status = 1
+        WHERE u.status = '1'
+          AND r.code = 'pilot'
+        ORDER BY u.id
+    </select>
+
+    <!--
+      派发下拉的设备候选：只取待命的。
+      飞行中 / 充电中 / 维护中 / 离线的设备不出现在候选里 ——
+      要派它就得先去设备管理把状态改回来，这道摩擦是有意的。
+    -->
+    <select id="selectDispatchableDrones" resultType="cn.tedu.drone.task.pojo.TaskDispatchOptionVO">
+        SELECT d.id AS id,
+               CONCAT(d.code, ' · ', d.name) AS label
+        FROM `drone` d
+        WHERE d.status = 'idle'
+        ORDER BY d.code
+    </select>
+
+    <!-- 监控看板：当前所有执行中的任务（不加分页 —— 看板要的是「全部在飞的」） -->
+    <select id="selectExecuting" resultType="cn.tedu.drone.task.pojo.TaskPO">
+        SELECT <include refid="taskColumns"/>
+        FROM `task` t
+        WHERE t.status = 'executing'
+        ORDER BY t.actual_start_time, t.id
+    </select>
+
+    <!-- ================================================================
+         执行证据
+         ================================================================ -->
+    <!--
+      一条遥测属于哪条任务：找这台设备当前正在执行的任务。
+
+      ORDER BY actual_start_time DESC 取最新开工的那条。正常情况下
+      一台设备只会有一条 executing 的任务（派发时的时间窗冲突检查会挡住重叠），
+      但排班允许「上一单结束、下一单开始」这种不重叠的组合，
+      所以极短窗口内可能出现两条 —— 那种情况下把遥测算给最近开工的，不报错。
+      这条数据本就无法精确归属，报错只会让好数据也存不下来。
+
+      LIMIT 1 是必须的：不限制的话设备发的每条遥测都会捞回多行，
+      消费线程还得自己去挑，不如让数据库一次定好。
+    -->
+    <select id="selectExecutingByDrone" resultType="cn.tedu.drone.task.pojo.TaskPO">
+        SELECT <include refid="taskColumns"/>
+        FROM `task` t
+        WHERE t.drone_id = #{droneId}
+          AND t.status = 'executing'
+        ORDER BY t.actual_start_time DESC, t.id DESC
+        LIMIT 1
+    </select>
+
+    <!--
+      把证据状态抬到「已证实」。
+
+      AND evidence_state &lt;&gt; 'confirmed' 让这条更新天然幂等，也顺手打开了
+      stale → confirmed 的通道（标了过期又来真数据，照样能翻回来）。
+      这一列<b>只表示依据</b>，不表示任务状态，所以这里一个字都不碰 status：
+      「有没有客观数据佐证」和「业务走到哪一步」是两个正交的维度。
+    -->
+    <update id="markEvidenceConfirmed">
+        UPDATE `task`
+        SET evidence_state = 'confirmed',
+            evidence_type  = #{evidenceType},
+            evidence_at    = #{evidenceAt}
+        WHERE id = #{taskId}
+          AND evidence_state &lt;&gt; 'confirmed'
+    </update>
+
+    <!--
+      超时未获旁证的扫描：声明了要执行，但从「开始执行」那一刻起算，
+      到 deadline 都还没等到任何设备数据。
+
+      只扫 executing + declared 这一种组合：confirmed 的已经有依据、
+      stale 的已经标过（重复扫只会每轮刷一遍同样的日志）、
+      其余状态则压根没有「声明」可言。
+
+      和 selectExpiredDispatched 同样，deadline 由 Java 传进来而不是用 SQL 的 NOW()：
+      mysqld 时区是 UTC，而我们写进去的 actual_start_time 是本地时间，差 8 小时。
+    -->
+    <select id="selectStaleEvidenceTasks" resultType="cn.tedu.drone.task.pojo.TaskPO">
+        SELECT <include refid="taskColumns"/>
+        FROM `task` t
+        WHERE t.status = 'executing'
+          AND t.evidence_state = 'declared'
+          AND t.actual_start_time IS NOT NULL
+          AND t.actual_start_time &lt; #{deadline}
+        ORDER BY t.id
+        LIMIT #{limit}
+    </select>
+
+    <!--
+      标记为「声明已过期」。
+
+      AND evidence_state = 'declared' 是关键：它能保证<b>绝不覆盖已有的证据</b>。
+      如果这条任务在这期间已经被遥测证实（confirmed），这里会返回 0 行 ——
+      定时任务的职责是「把没依据的降级」，不是「无条件改写」。
+      这一列依旧不碰 status：过期只说「我们没拿到旁证」，
+      不替人下结论说「飞手一定没飞」。
+    -->
+    <update id="markEvidenceStale">
+        UPDATE `task`
+        SET evidence_state = 'stale'
+        WHERE id = #{taskId}
+          AND evidence_state = 'declared'
+    </update>
+
+
+    <!-- ================================================================
+         数字大屏的聚合查询（见 docs/数字大屏方案.md 3.2）
+         一律走 GROUP BY 或 COUNT，**不把明细拉回来在 Java 里数**
+         ================================================================ -->
+
+    <!--
+      按状态分组。pilotId 非空时只算他的 —— 任务总览与「我的任务」共用这一条。
+      返回 status + cnt 两列，Service 里拼成 Map（分组结果的形状天然就是「值 → 条数」）。
+    -->
+    <select id="countGroupByStatus" resultType="java.util.Map">
+        SELECT t.status AS status, COUNT(*) AS cnt
+        FROM `task` t
+        <where>
+            <if test="pilotId != null">
+                AND t.pilot_id = #{pilotId}
+            </if>
+        </where>
+        GROUP BY t.status
+    </select>
+
+    <!-- 「今日新增」：时间点由 Java 传（mysqld 是 UTC，用它的 CURDATE() 会差一天） -->
+    <select id="countCreatedSince" resultType="long">
+        SELECT COUNT(*)
+        FROM `task` t
+        WHERE t.create_time &gt;= #{from}
+        <if test="pilotId != null">
+            AND t.pilot_id = #{pilotId}
+        </if>
+    </select>
+
+    <!-- 超期：执行中且已过计划结束时间（与监控看板的 overdue 同一口径） -->
+    <select id="countOverdue" resultType="long">
+        SELECT COUNT(*)
+        FROM `task` t
+        WHERE t.status = 'executing'
+          AND t.plan_end_time IS NOT NULL
+          AND t.plan_end_time &lt; #{now}
+        <if test="pilotId != null">
+            AND t.pilot_id = #{pilotId}
+        </if>
+    </select>
+
+</mapper>

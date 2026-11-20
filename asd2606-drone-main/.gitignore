@@ -1,0 +1,33 @@
+### IDE / 本地配置 ###
+### .qoder/（共享 agents/skills/hooks；settings.local 仍忽略）
+!.qoder/
+.qoder/*
+!.qoder/settings.json
+!.qoder/hooks/
+!.qoder/hooks/**
+!.qoder/agents/
+!.qoder/agents/**
+!.qoder/skills/
+!.qoder/skills/**
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.classpath
+.project
+.settings/
+
+### 系统文件 ###
+.DS_Store
+
+### 日志 ###
+*.log
+
+### 附件上传目录 ###
+# 飞手端的现场照片与飞行日志落在 drone.upload.root（默认 ./data/upload）。
+# **必须忽略**：这里面是真实的设备照片与飞行日志 —— 体积大、且属于业务数据，
+# 一旦被 git add 进来就会永久留在仓库历史里。生产部署时这里要挂卷，见
+# drone-server/docs/任务收尾与执行报告.md 第八章。
+data/
+

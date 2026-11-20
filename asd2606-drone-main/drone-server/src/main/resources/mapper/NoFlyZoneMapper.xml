@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.zone.dao.NoFlyZoneDao">
+
+    <sql id="zoneColumns">
+        z.id, z.name, z.source, z.shape, z.geometry, z.max_alt,
+        z.effective_from, z.effective_to, z.enabled, z.remark,
+        z.create_by, z.create_by_name, z.create_time, z.update_time
+    </sql>
+
+    <sql id="zoneCondition">
+        <where>
+            <if test="keyword != null and keyword != ''">
+                AND z.name LIKE CONCAT('%', #{keyword}, '%')
+            </if>
+            <if test="source != null and source != ''">
+                AND z.source = #{source}
+            </if>
+            <!-- Boolean 由 MyBatis 的 BooleanTypeHandler 转成 1/0，MySQL 认 -->
+            <if test="enabled != null">
+                AND z.enabled = #{enabled}
+            </if>
+        </where>
+    </sql>
+
+    <!-- 最新画的排前面；id 兜底保证分页顺序稳定 -->
+    <select id="selectByCondition" resultType="cn.tedu.drone.zone.pojo.NoFlyZonePO">
+        SELECT <include refid="zoneColumns"/>
+        FROM `no_fly_zone` z
+        <include refid="zoneCondition"/>
+        ORDER BY z.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByCondition" resultType="long">
+        SELECT COUNT(*)
+        FROM `no_fly_zone` z
+        <include refid="zoneCondition"/>
+    </select>
+
+    <select id="selectById" resultType="cn.tedu.drone.zone.pojo.NoFlyZonePO">
+        SELECT <include refid="zoneColumns"/>
+        FROM `no_fly_zone` z
+        WHERE z.id = #{id}
+    </select>
+
+    <!--
+      校验用：启用中 + 在生效期内。
+      「没填生效期」= 长期有效，所以 IS NULL 那半边不能少 ——
+      写成 effective_from <= now 会把所有长期有效的区域全漏掉（而且是静默漏掉）。
+    -->
+    <select id="selectEffective" resultType="cn.tedu.drone.zone.pojo.NoFlyZonePO">
+        SELECT <include refid="zoneColumns"/>
+        FROM `no_fly_zone` z
+        WHERE z.enabled = 1
+          AND (z.effective_from IS NULL OR z.effective_from &lt;= #{now})
+          AND (z.effective_to IS NULL OR z.effective_to &gt;= #{now})
+        ORDER BY z.id
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `no_fly_zone` (name, source, shape, geometry, max_alt,
+                                   effective_from, effective_to, enabled, remark,
+                                   create_by, create_by_name)
+        VALUES (#{name}, #{source}, #{shape}, #{geometry}, #{maxAlt},
+                #{effectiveFrom}, #{effectiveTo}, #{enabled}, #{remark},
+                #{createBy}, #{createByName})
+    </insert>
+
+    <!--
+      整份覆盖。理由与点位/航线一致：编辑表单会带上全部字段，
+      用 <set><if> 反而让「清空限高」「清掉生效期」做不到 ——
+      传 null 会被当成「这个字段不用改」，用户看到的是「保存成功，限高还在」。
+    -->
+    <update id="update">
+        UPDATE `no_fly_zone`
+        SET name           = #{name},
+            source         = #{source},
+            shape          = #{shape},
+            geometry       = #{geometry},
+            max_alt        = #{maxAlt},
+            effective_from = #{effectiveFrom},
+            effective_to   = #{effectiveTo},
+            enabled        = #{enabled},
+            remark         = #{remark}
+        WHERE id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM `no_fly_zone` WHERE id = #{id}
+    </delete>
+
+    <update id="updateEnabled">
+        UPDATE `no_fly_zone`
+        SET enabled = #{enabled}
+        WHERE id = #{id}
+    </update>
+
+</mapper>

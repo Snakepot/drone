@@ -1,0 +1,308 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.analytics.dao.AnalyticsDao">
+
+    <!-- 区间内每个归因多少个点。
+         没采过的归因（比如这一周一条 idle 都没有）不会出现在结果里 ——
+         补 0 是界面的事：服务层按「清单里有哪几个取值」去对齐，
+         而不是让 SQL 去 UNION 一张不存在的事实表 -->
+    <select id="countBlockReasonGroup" resultType="java.util.Map">
+        SELECT b.reason AS reason, COUNT(*) AS cnt
+        FROM `task_dispatch_block` b
+        WHERE b.checked_at &gt;= #{from}
+          AND b.checked_at &lt; #{to}
+        GROUP BY b.reason
+    </select>
+
+    <!-- 有采样的小时数。
+         ⚠ 用 DATE_FORMAT 把时刻截到「哪一天的第几个钟头」，不要用 HOUR(checked_at)：
+         后者会把不同天的同一个钟头合成一格（周一 9 点与周二 9 点算同一小时），
+         偏小的时候还不明显，区间一拉长就完全失真 -->
+    <select id="countBlockSampledHours" resultType="long">
+        SELECT COUNT(DISTINCT DATE_FORMAT(b.checked_at, '%Y-%m-%d %H'))
+        FROM `task_dispatch_block` b
+        WHERE b.checked_at &gt;= #{from}
+          AND b.checked_at &lt; #{to}
+    </select>
+
+    <!-- 此刻待派发任务的等待时长分桶：一次扫表算完三桶（分三次查同一张表没必要）。
+
+         ⚠ 分界点必须用 NOW() 在库里算，不能由 Java 传「现在」进来。
+         原因见 AnalyticsDao 的类注释「库里有两个时钟」：
+         create_time 是 mysqld 自己填的（这台是 UTC），而 Java 传来的字面量是 +08:00，
+         两者相差 8 小时 —— 传进来会让**刚创建的任务**被判成「等了一天」。
+         这里要的是**时长**（现在 − 创建时刻），两边非得同源不可。
+         分界点是开是闭（>= 还是 >）只影响正好卡在那一刻的那一条，
+         这里取「一小时内」为严格小于一小时，与界面上的说法一致 -->
+    <select id="countPendingByAge" resultType="java.util.Map">
+        SELECT SUM(CASE WHEN t.create_time &gt; NOW() - INTERVAL 1 HOUR THEN 1 ELSE 0 END) AS lt1h,
+               SUM(CASE WHEN t.create_time &lt;= NOW() - INTERVAL 1 HOUR
+                         AND t.create_time &gt; NOW() - INTERVAL 1 DAY THEN 1 ELSE 0 END) AS lt1d,
+               SUM(CASE WHEN t.create_time &lt;= NOW() - INTERVAL 1 DAY THEN 1 ELSE 0 END) AS ge1d
+        FROM `task` t
+        WHERE t.status = 'pending'
+    </select>
+
+    <!-- 「创建 → 派发」用时。
+         取 MIN(l.create_time)：撤回后重新派发会在 task_log 里留下两条 dispatch 流水，
+         我们要的是**最早那次** —— 用后面那次会把「管理是否及时」算得比实际更好看。
+         区间过滤打在流水时间上：要统计的是「这段时间里派出去的活，各自等了多久」，
+         而不是「这段时间里创建的任务」 -->
+    <select id="selectDispatchDurations" resultType="long">
+        SELECT TIMESTAMPDIFF(MINUTE, t.create_time, MIN(l.create_time)) AS minutes
+        FROM `task` t
+        JOIN `task_log` l ON l.task_id = t.id AND l.action = 'dispatch'
+        WHERE l.create_time &gt;= #{from}
+          AND l.create_time &lt; #{to}
+          AND t.create_time IS NOT NULL
+        GROUP BY t.id
+    </select>
+
+    <!-- ================================================================
+         任务与告警概览（docs/业务分析方案.md 第一步）
+         ================================================================ -->
+
+    <!-- mysqld 的墙上时间与 UTC 差多少秒。
+         用来算「库里那两类时间差多久」—— 应用侧偏移减它就是 create_time 要平移的秒数（见 AnalyticsDao） -->
+    <select id="selectServerClockOffsetSeconds" resultType="long">
+        SELECT TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW())
+    </select>
+
+    <!-- 按「应用侧的每一天」统计新建任务数。
+         create_time 是 mysqld 用它自己的时钟填的，所以要先把这一列平移到应用时钟再取日期；
+         而**区间端点反过来平移**（-shift）后与裸列比较 —— 在列上套函数会让索引用不上，
+         换算挂在常量端就没有这个问题 -->
+    <select id="countTaskCreatedByDay" resultType="java.util.Map">
+        SELECT DATE_FORMAT(TIMESTAMPADD(SECOND, #{shiftSeconds}, t.create_time), '%Y-%m-%d') AS day,
+               COUNT(*) AS cnt
+        FROM `task` t
+        WHERE t.create_time IS NOT NULL
+          AND t.create_time &gt;= TIMESTAMPADD(SECOND, -#{shiftSeconds}, #{from})
+          AND t.create_time &lt; TIMESTAMPADD(SECOND, -#{shiftSeconds}, #{to})
+        GROUP BY day
+    </select>
+
+    <!-- 区间内「结束」的任务：完成与失败各自的条数，加上按时率/平均时长的分子分母。
+         一次扫表把六个数字都算出来（分六次查同一张表没有必要）。
+         actual_end_time / actual_start_time / plan_end_time 都是 Java 写的（本地时间），
+         所以区间直接比，不需要平移。
+         取消的任务永远不在这里 —— 它没有 actual_end_time，也就没有「结束」这件事 -->
+    <select id="countTaskOutcome" resultType="java.util.Map">
+        SELECT SUM(CASE WHEN t.status = 'finished' THEN 1 ELSE 0 END) AS finished,
+               SUM(CASE WHEN t.status = 'failed' THEN 1 ELSE 0 END)   AS failed,
+               SUM(CASE WHEN t.status = 'finished'
+                         AND t.plan_end_time IS NOT NULL THEN 1 ELSE 0 END) AS onTimeBase,
+               SUM(CASE WHEN t.status = 'finished'
+                         AND t.plan_end_time IS NOT NULL
+                         AND t.actual_end_time &lt;= t.plan_end_time THEN 1 ELSE 0 END) AS onTime,
+               SUM(CASE WHEN t.status = 'finished'
+                         AND t.actual_start_time IS NOT NULL THEN 1 ELSE 0 END) AS durationBase,
+               AVG(CASE WHEN t.status = 'finished'
+                         AND t.actual_start_time IS NOT NULL
+                         THEN TIMESTAMPDIFF(MINUTE, t.actual_start_time, t.actual_end_time) END) AS avgMinutes
+        FROM `task` t
+        WHERE t.actual_end_time IS NOT NULL
+          AND t.actual_end_time &gt;= #{from}
+          AND t.actual_end_time &lt; #{to}
+    </select>
+
+    <!-- 告警按「天 × 级别」计数。observed_at 是 Java 按本地时间写的，DATE() 出来就是应用侧的日，
+         与任务那条趋势天然同一天轴（这正是两图能叠着看的前提） -->
+    <select id="countAlertByDayAndSeverity" resultType="java.util.Map">
+        SELECT DATE_FORMAT(a.observed_at, '%Y-%m-%d') AS day,
+               a.severity AS severity,
+               COUNT(*) AS cnt
+        FROM `task_alert` a
+        WHERE a.observed_at &gt;= #{from}
+          AND a.observed_at &lt; #{to}
+        GROUP BY day, severity
+    </select>
+
+    <!-- 告警的总量、严重数、已处置数与 MTTR。
+         openNow 是**快照**（不看区间）：MTTR 说「处置得快不快」，积压说「还欠着多少」，
+         两件事要分开 —— 否则「处理很快但越积越多」会被一个漂亮的 MTTR 掩盖掉 -->
+    <select id="countAlertSummary" resultType="java.util.Map">
+        SELECT COUNT(*) AS total,
+               SUM(CASE WHEN a.severity = 'critical' THEN 1 ELSE 0 END) AS critical,
+               SUM(CASE WHEN a.handled_at IS NOT NULL THEN 1 ELSE 0 END) AS handled,
+               AVG(CASE WHEN a.handled_at IS NOT NULL
+                         THEN TIMESTAMPDIFF(MINUTE, a.observed_at, a.handled_at) END) AS mttrMinutes,
+               (SELECT COUNT(*) FROM `task_alert` WHERE status IN ('pending', 'handling')) AS openNow
+        FROM `task_alert` a
+        WHERE a.observed_at &gt;= #{from}
+          AND a.observed_at &lt; #{to}
+    </select>
+
+    <!-- ================================================================
+         飞手与设备效率（docs/业务分析方案.md 第二步）
+         ================================================================ -->
+
+    <!-- 花名册：全部在册飞手。榜单要能看出「谁闲」，所以没有活的那几位也得在 -->
+    <select id="selectPilotRoster" resultType="java.util.Map">
+        SELECT u.id AS id, u.name AS name
+        FROM `user` u
+        JOIN user_role ur ON ur.user_id = u.id
+        JOIN `role` r ON r.id = ur.role_id AND r.status = 1
+        WHERE u.status = '1'
+          AND r.code = 'pilot'
+        ORDER BY u.id
+    </select>
+
+    <!-- 区间内「结束」的活按飞手汇总 + 报告里的架次与时长。
+         LEFT JOIN 报告：没交报告的任务也要算进工作量（活是他干的），
+         只是架次/时长那两列为空。
+         is_latest = 1：报告可以修订，不加这个条件会把历史版本一起加起来 -->
+    <select id="countPilotOutcome" resultType="java.util.Map">
+        SELECT t.pilot_id AS pilotId,
+               COUNT(*) AS taskCount,
+               SUM(CASE WHEN t.status = 'finished' THEN 1 ELSE 0 END) AS finished,
+               SUM(CASE WHEN t.status = 'finished'
+                         AND t.plan_end_time IS NOT NULL THEN 1 ELSE 0 END) AS onTimeBase,
+               SUM(CASE WHEN t.status = 'finished'
+                         AND t.plan_end_time IS NOT NULL
+                         AND t.actual_end_time &lt;= t.plan_end_time THEN 1 ELSE 0 END) AS onTime,
+               SUM(r.flight_hours) AS hours,
+               SUM(r.flight_count) AS sorties
+        FROM `task` t
+        LEFT JOIN `task_report` r ON r.task_id = t.id AND r.is_latest = 1
+        WHERE t.pilot_id IS NOT NULL
+          AND t.actual_end_time IS NOT NULL
+          AND t.actual_end_time &gt;= #{from}
+          AND t.actual_end_time &lt; #{to}
+        GROUP BY t.pilot_id
+    </select>
+
+    <!-- 区间内「开过」的活（含还在飞的）+ 其中「只有声明、没有设备旁证」的条数。
+         ⚠ 窗口是 actual_start_time，与上面那条**故意不同**：
+         「他说在飞却没证据」要在飞行中暴露，只算结束的活会正好漏掉它 -->
+    <select id="countPilotEvidence" resultType="java.util.Map">
+        SELECT t.pilot_id AS pilotId,
+               COUNT(*) AS started,
+               SUM(CASE WHEN t.evidence_state IN ('declared', 'stale') THEN 1 ELSE 0 END) AS noProof
+        FROM `task` t
+        WHERE t.pilot_id IS NOT NULL
+          AND t.actual_start_time IS NOT NULL
+          AND t.actual_start_time &gt;= #{from}
+          AND t.actual_start_time &lt; #{to}
+        GROUP BY t.pilot_id
+    </select>
+
+    <!-- 派发与拒绝的次数（按流水）。返回 offers = 「派给他的次数」、refused = 拒绝次数。
+         ⚠ 为什么要 UNION，以及为什么第二半也记一次 offers：
+         **拒绝之后任务的 pilot_id 会被清空**（releaseAssignment / clearDispatch 把
+         pilot_id、pilot_name 一并还原），所以「他拒掉的那些」从那之后不再挂在任何飞手名下。
+         只按 task.pilot_id 统计派发的话，拒得越多、分母越小，拒绝率反而虚高 ——
+         所以拒绝那一半要同时记 offers（那次也是派给他了）与 refused，两半相加才是分母。
+         两半各按各自的线索认人：派发看任务**现在**的指派飞手，拒绝看流水上的 operator_id。
+         ⚠ task_log.create_time 是 mysqld 的时钟，所以列平移（+shift）、端点反过来平移（-shift）
+         后与裸列比较；重派会再留一条 dispatch 流水，那正是「派给他的次数」 -->
+    <select id="countPilotActions" resultType="java.util.Map">
+        SELECT x.pilotId AS pilotId,
+               SUM(x.offers) AS offers,
+               SUM(x.refused) AS refused
+        FROM (
+            SELECT t.pilot_id AS pilotId, 1 AS offers, 0 AS refused
+            FROM `task_log` l
+            JOIN `task` t ON t.id = l.task_id
+            WHERE l.action = 'dispatch'
+              AND t.pilot_id IS NOT NULL
+              AND l.create_time &gt;= TIMESTAMPADD(SECOND, -#{shiftSeconds}, #{from})
+              AND l.create_time &lt; TIMESTAMPADD(SECOND, -#{shiftSeconds}, #{to})
+            UNION ALL
+            SELECT l.operator_id AS pilotId, 1 AS offers, 1 AS refused
+            FROM `task_log` l
+            WHERE l.action = 'refuse'
+              AND l.operator_id IS NOT NULL
+              AND l.create_time &gt;= TIMESTAMPADD(SECOND, -#{shiftSeconds}, #{from})
+              AND l.create_time &lt; TIMESTAMPADD(SECOND, -#{shiftSeconds}, #{to})
+        ) x
+        GROUP BY x.pilotId
+    </select>
+
+    <!-- 设备花名册：全部设备（一直没飞的那几台也要在榜上） -->
+    <select id="selectDeviceRoster" resultType="java.util.Map">
+        SELECT d.id AS id, d.code AS code, d.name AS name, d.status AS status,
+               DATE_FORMAT(d.purchase_date, '%Y-%m-%d') AS purchaseDate
+        FROM `drone` d
+        ORDER BY d.code
+    </select>
+
+    <!-- 区间内各设备的飞行时长与架次（按任务的实际结束时间落窗，报告取最新版本） -->
+    <select id="countDeviceReports" resultType="java.util.Map">
+        SELECT t.drone_id AS deviceId,
+               SUM(r.flight_hours) AS hours,
+               SUM(r.flight_count) AS sorties
+        FROM `task` t
+        JOIN `task_report` r ON r.task_id = t.id AND r.is_latest = 1
+        WHERE t.drone_id IS NOT NULL
+          AND t.actual_end_time IS NOT NULL
+          AND t.actual_end_time &gt;= #{from}
+          AND t.actual_end_time &lt; #{to}
+        GROUP BY t.drone_id
+    </select>
+
+    <!-- 区间内各设备的告警数（按设备编号关联；device_code 为空的告警不属于任何设备） -->
+    <select id="countDeviceAlerts" resultType="java.util.Map">
+        SELECT a.device_code AS deviceCode,
+               COUNT(*) AS alerts,
+               SUM(CASE WHEN a.severity = 'critical' THEN 1 ELSE 0 END) AS criticalAlerts
+        FROM `task_alert` a
+        WHERE a.device_code IS NOT NULL
+          AND a.observed_at &gt;= #{from}
+          AND a.observed_at &lt; #{to}
+        GROUP BY a.device_code
+    </select>
+
+    <!-- 每天每台设备多少条证据。
+         写预聚合与「今天实时补」用的是**同一条**（口径只能有一处）：
+         observed_at 是 Java 按本地时间写的，所以 DATE_FORMAT 出来就是应用侧的日，不用平移。
+         只数 valid = 1：被推翻的证据不算进趋势 -->
+    <select id="countEvidenceByDayAndDevice" resultType="java.util.Map">
+        SELECT DATE_FORMAT(e.observed_at, '%Y-%m-%d') AS day,
+               e.device_code AS deviceCode,
+               COUNT(*) AS cnt
+        FROM `task_evidence` e
+        WHERE e.valid = 1
+          AND e.observed_at &gt;= #{from}
+          AND e.observed_at &lt; #{to}
+        GROUP BY day, e.device_code
+    </select>
+
+    <!-- ================================================================
+         点位覆盖率（docs/业务分析方案.md 第四步）
+         ================================================================ -->
+
+    <!-- 区间内已结束的任务 + 航线快照。快照交给 Java 解析（RouteService 里已有现成的解析器） -->
+    <select id="selectFinishedTasksWithSnapshot" resultType="java.util.Map">
+        SELECT t.id            AS id,
+               t.task_no       AS taskNo,
+               t.route_snapshot AS routeSnapshot
+        FROM `task` t
+        WHERE t.actual_end_time IS NOT NULL
+          AND t.actual_end_time &gt;= #{from}
+          AND t.actual_end_time &lt; #{to}
+        ORDER BY t.id
+    </select>
+
+    <!-- 窗口内那些任务的打卡。关联条件与上面那条一致（同一批任务），
+         否则会出现「任务算进来了、打卡没算」这种自相矛盾 -->
+    <select id="selectCheckinsOfFinishedTasks" resultType="java.util.Map">
+        SELECT c.task_id AS taskId, c.seq AS seq, c.deviation_m AS deviationM
+        FROM `task_checkin` c
+        JOIN `task` t ON t.id = c.task_id
+        WHERE t.actual_end_time IS NOT NULL
+          AND t.actual_end_time &gt;= #{from}
+          AND t.actual_end_time &lt; #{to}
+    </select>
+
+    <!-- 批量取点位（只取展示要用的几列） -->
+    <select id="selectPointsByIds" resultType="java.util.Map">
+        SELECT p.id AS id, p.code AS code, p.name AS name
+        FROM `survey_point` p
+        WHERE p.id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+</mapper>

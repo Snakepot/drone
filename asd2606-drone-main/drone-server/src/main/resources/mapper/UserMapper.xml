@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.user.dao.UserDao">
+
+    <select id="selectByUsername" resultType="cn.tedu.drone.user.pojo.UserPO">
+        SELECT id, username, name, password, email, phone, age, gender,
+               status, state, create_time, update_time
+        FROM `user`
+        WHERE username = #{username}
+        LIMIT 1
+    </select>
+
+    <select id="selectById" resultType="cn.tedu.drone.user.pojo.UserPO">
+        SELECT id, username, name, password, email, phone, age, gender,
+               status, state, create_time, update_time
+        FROM `user`
+        WHERE id = #{id}
+    </select>
+
+    <!-- 列表展示不需要密码，所以不查 password 字段 -->
+    <select id="selectAll" resultType="cn.tedu.drone.user.pojo.UserPO">
+        SELECT id, username, name, email, phone, age, gender,
+               status, state, create_time, update_time
+        FROM `user`
+        ORDER BY id
+    </select>
+
+    <!--
+      可复用的查询条件。
+      列表查询、计数、导出三处共用同一份 —— 条件写歪了就会出现
+      「总数说有 100 条、导出却只有 80 条」这种对不上的情况。
+      注意这里用 u 作为表别名，调用方的 FROM 子句必须带同样的别名。
+    -->
+    <sql id="userCondition">
+        <where>
+            <if test="keyword != null and keyword != ''">
+                AND (u.username LIKE CONCAT('%', #{keyword}, '%')
+                    OR u.name LIKE CONCAT('%', #{keyword}, '%')
+                    OR u.phone LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+            <if test="status != null and status != ''">
+                AND u.status = #{status}
+            </if>
+            <if test="roleCode != null and roleCode != ''">
+                AND u.id IN (
+                    SELECT ur.user_id
+                    FROM user_role ur
+                    JOIN `role` r ON r.id = ur.role_id
+                    WHERE r.code = #{roleCode}
+                )
+            </if>
+        </where>
+    </sql>
+
+    <!-- offset / limit 由 UserQueryParam 的 getOffset() / getLimit() 提供，内部已做非法值兜底 -->
+    <select id="selectByCondition" resultType="cn.tedu.drone.user.pojo.UserPO">
+        SELECT u.id, u.username, u.name, u.email, u.phone, u.age, u.gender,
+               u.status, u.state, u.create_time, u.update_time
+        FROM `user` u
+        <include refid="userCondition"/>
+        ORDER BY u.id
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByCondition" resultType="long">
+        SELECT COUNT(*)
+        FROM `user` u
+        <include refid="userCondition"/>
+    </select>
+
+    <!-- 导入时用于账号唯一性校验：只取账号这一列，数据量比整行小得多 -->
+    <select id="selectUsernames" resultType="java.lang.String">
+        SELECT username FROM `user`
+    </select>
+
+    <!--
+      批量插入。
+      useGeneratedKeys 会把自增主键回填到每个 UserPO 的 id 上 ——
+      导入时紧接着要往 user_role 里插关联记录，必须拿到用户 ID。
+    -->
+    <insert id="insertBatch" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `user` (username, name, password, email, phone, age, gender, status, state)
+        VALUES
+        <foreach collection="list" item="u" separator=",">
+            (#{u.username}, #{u.name}, #{u.password}, #{u.email}, #{u.phone},
+             #{u.age}, #{u.gender}, #{u.status}, #{u.state})
+        </foreach>
+    </insert>
+
+    <!--
+      导出专用查询：用 GROUP_CONCAT 一次带出用户的多个角色名，
+      避免「查出行之后每行再查一次角色」的 N+1 问题。
+      同样接收分页参数 —— 导出是分批取数的，不是一次全捞。
+    -->
+    <select id="selectForExport" resultType="cn.tedu.drone.user.pojo.UserExportRow">
+        SELECT u.id, u.username, u.name, u.phone, u.email, u.age, u.gender,
+               u.status, u.create_time,
+               GROUP_CONCAT(DISTINCT r.name ORDER BY r.id SEPARATOR '、') AS role_names
+        FROM `user` u
+        LEFT JOIN user_role ur ON ur.user_id = u.id
+        LEFT JOIN `role` r ON r.id = ur.role_id AND r.status = 1
+        <include refid="userCondition"/>
+        GROUP BY u.id, u.username, u.name, u.phone, u.email, u.age, u.gender, u.status, u.create_time
+        ORDER BY u.id
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <!--
+      按非空字段更新。<set> 标签会自动去掉多余的逗号。
+      刻意不更新 username（登录凭证，改了用户就登不上了），
+      password 也只有传了才更新（留空 = 不改密码）。
+    -->
+    <update id="update">
+        UPDATE `user`
+        <set>
+            <if test="name != null">name = #{name},</if>
+            <if test="password != null">password = #{password},</if>
+            <if test="email != null">email = #{email},</if>
+            <if test="phone != null">phone = #{phone},</if>
+            <if test="age != null">age = #{age},</if>
+            <if test="gender != null">gender = #{gender},</if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateStatus">
+        UPDATE `user` SET status = #{status} WHERE id = #{id}
+    </update>
+
+    <!--
+      比较并交换（CAS）：只有当前值等于预期值才改。
+      AND state = #{expectState} 是这条 SQL 的全部重点 ——
+      少了它就不是 CAS，而是「无条件覆盖」，会踩掉别人刚改的值。
+    -->
+    <update id="updateStateIfMatch">
+        UPDATE `user`
+        SET state = #{newState}
+        WHERE id = #{id}
+          AND state = #{expectState}
+    </update>
+
+
+    <!-- 大屏：启用中的账号按在线状态分布（被禁用的不算「值班的人」） -->
+    <select id="countEnabledGroupByState" resultType="java.util.Map">
+        SELECT u.state AS state, COUNT(*) AS cnt
+        FROM `user` u
+        WHERE u.status = '1'
+        GROUP BY u.state
+    </select>
+
+</mapper>

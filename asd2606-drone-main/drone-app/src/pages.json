@@ -1,0 +1,33 @@
+{
+  "pages": [
+    {
+      "path": "pages/login/login",
+      "style": {
+        "navigationBarTitleText": "飞手登录",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/task/my",
+      "style": {
+        "navigationBarTitleText": "我的任务",
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "light",
+        "onReachBottomDistance": 80
+      }
+    },
+    {
+      "path": "pages/task/detail",
+      "style": {
+        "navigationBarTitleText": "任务地图与打卡",
+        "enablePullDownRefresh": false
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "white",
+    "navigationBarTitleText": "飞手工作台",
+    "navigationBarBackgroundColor": "#0a1630",
+    "backgroundColor": "#03060f"
+  }
+}

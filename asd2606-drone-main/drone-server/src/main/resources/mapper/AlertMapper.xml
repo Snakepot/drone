@@ -1,0 +1,271 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.task.dao.AlertDao">
+
+    <!--
+      写入一条告警 —— 除非「同一设备 + 同一编码」还有未处理的告警。
+
+      ## 为什么不能只是普通插入
+
+      阈值类告警是**服务端每条遥测算一次**算出来的（设备根本不会报「我电量低了」），
+      而遥测是每秒一条 —— 如果只靠唯一键去重，一个持续 5 分钟的低电量
+      会留下约 300 行，全部指向同一个问题。
+      （这不是推测：用模拟器实跑 10 秒，一个连续的低电量就产生了 11 行。）
+
+      所以规则是：**只要这个问题还没被处理掉，就不再重复产生。**
+      这也是「告警是状态判定、不是采样」这个定位的必然推论 ——
+      状态没变，就还是同一条问题。
+
+      ## 为什么用 INSERT ... SELECT ... WHERE NOT EXISTS
+
+      判断与写入在**同一条语句**里完成，没有并发窗口。
+      如果用「先 SELECT 数一下、再 INSERT」，两个消费线程
+      （`drone.mqtt.worker-threads` 默认就是 2）可能同时查到「没有未处理的」，
+      然后各插一条 —— 又变回重复了。
+      （MySQL 允许 INSERT ... SELECT 的子查询引用目标表，这里实测可用。）
+
+      ## 三个行为的说明
+
+      * **已经 resolved / ignored 的告警不参与判断**：问题处理完了又复发，
+        应该产生一条**新的**告警 —— 那是一次新的事件，不是同一条的延续。
+      * **device_code 为 NULL 时永不抑制**：`NULL = NULL` 在 SQL 里不成立，
+        所以人工上报（没有设备编号）不会被互相抑制 —— 这恰好是对的：
+        飞手一分钟内报两次「现场有干扰」是两次上报，不该合成一条。
+      * **唯一键 uk_alert_dedup 仍然保留**：它挡的是「完全相同的这一条被重复投递」
+        （QoS 1 重投、设备重传）；NOT EXISTS 挡的是「同一问题还在挂着」。
+        两条防线各管一件事，都不能省。
+
+      返回 1 = 新增；0 = 没新增（同一问题已有未处理的，或这一条之前就报过）。
+    -->
+    <insert id="insertUnlessOpen">
+        INSERT IGNORE INTO task_alert (task_id, device_code, alert_code, severity, message,
+                                       payload, source, observed_at, reported_at, status,
+                                       pilot_action_required, action_hint)
+        SELECT #{taskId}, #{deviceCode}, #{alertCode}, #{severity}, #{message},
+               #{payload}, #{source}, #{observedAt}, #{reportedAt}, 'pending',
+               #{pilotActionRequired}, #{actionHint}
+        FROM DUAL
+        WHERE NOT EXISTS (
+            SELECT 1 FROM task_alert
+            WHERE device_code = #{deviceCode}
+              AND alert_code = #{alertCode}
+              AND status IN ('pending', 'handling')
+        )
+    </insert>
+
+    <!--
+      人工上报的普通插入。
+
+      与上面 insertUnlessOpen 的区别：**不参与抑制**，并且回填自增主键。
+      为什么人工上报不需要抑制、以及为什么必须要主键，见 AlertDao.insert 的注释。
+    -->
+    <insert id="insert" parameterType="cn.tedu.drone.task.pojo.AlertPO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO task_alert (task_id, device_code, alert_code, severity, message,
+                                payload, source, observed_at, reported_at, status,
+                                pilot_action_required, action_hint)
+        VALUES (#{taskId}, #{deviceCode}, #{alertCode}, #{severity}, #{message},
+                #{payload}, #{source}, #{observedAt}, #{reportedAt}, #{status},
+                #{pilotActionRequired}, #{actionHint})
+    </insert>
+
+    <!-- ================================================================
+         查询与处理（管理端告警页）
+         ================================================================ -->
+
+    <!-- 列表页要展示的列。刻意不含 payload：那是原始报文，可能几 KB，
+         而列表页一行只用得上 message 那一句话。详情再单独查。 -->
+    <sql id="alertColumns">
+        a.id, a.task_id, a.device_code, a.alert_code, a.severity, a.message,
+        a.source, a.observed_at, a.reported_at, a.status,
+        a.handled_by, a.handled_by_name, a.handled_at, a.handle_note,
+        a.pilot_action_required, a.action_hint
+    </sql>
+
+    <!--
+      可复用的查询条件。列表与计数共用一份 —— 两处条件写歪了，就会出现
+      「总数说有 10 条、翻页却发现只有 8 条」这种对不上的情况（和任务列表同一个道理）。
+    -->
+    <sql id="alertCondition">
+        <where>
+            <if test="keyword != null and keyword != ''">
+                AND (a.device_code LIKE CONCAT('%', #{keyword}, '%')
+                    OR a.message LIKE CONCAT('%', #{keyword}, '%')
+                    OR a.alert_code LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+            <if test="severity != null and severity != ''">
+                AND a.severity = #{severity}
+            </if>
+            <if test="status != null and status != ''">
+                AND a.status = #{status}
+            </if>
+            <if test="deviceCode != null and deviceCode != ''">
+                AND a.device_code = #{deviceCode}
+            </if>
+            <if test="taskId != null">
+                AND a.task_id = #{taskId}
+            </if>
+            <if test="pilotActionRequired != null">
+                AND a.pilot_action_required = #{pilotActionRequired}
+            </if>
+            <!-- 发生时间区间：给「下钻」用（见 docs/业务分析方案.md 三点五）——
+                 MTTR 与告警趋势都按 observed_at 落窗，列表按同一列筛才对得上。
+                 左闭右开，与那些数的区间口径一致 -->
+            <if test="observedFrom != null">
+                AND a.observed_at &gt;= #{observedFrom}
+            </if>
+            <if test="observedTo != null">
+                AND a.observed_at &lt; #{observedTo}
+            </if>
+        </where>
+    </sql>
+
+    <!--
+      排序：**先按「还没处理完」排，再按级别高的在前，最后按时间新的在前**。
+
+      为什么不直接按时间倒序：告警页的第一屏应该回答「现在有什么要管的」。
+      一条昨天产生、至今没人处理的 critical，比一分钟前刚产生、已经处理完的
+      info 重要得多 —— 单纯按时间排会把它淹掉。
+      FIELD() 是 MySQL 的「按指定顺序排」函数，status 的 0/1/2 就是优先级。
+    -->
+    <select id="selectByCondition" resultType="cn.tedu.drone.task.pojo.AlertPO">
+        SELECT <include refid="alertColumns"/>
+        FROM task_alert a
+        <include refid="alertCondition"/>
+        ORDER BY FIELD(a.status, 'pending', 'handling', 'resolved', 'ignored'),
+                 FIELD(a.severity, 'critical', 'warning', 'info'),
+                 a.id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByCondition" resultType="long">
+        SELECT COUNT(*)
+        FROM task_alert a
+        <include refid="alertCondition"/>
+    </select>
+
+    <!-- 详情单独查，带上 payload（列表里不带，见上面 alertColumns 的注释） -->
+    <select id="selectById" resultType="cn.tedu.drone.task.pojo.AlertPO">
+        SELECT <include refid="alertColumns"/>, a.payload
+        FROM task_alert a
+        WHERE a.id = #{id}
+    </select>
+
+    <!--
+      「本任务期间的告警」—— 按 **task_id 或（设备 + 时间窗）** 两边查，见下。
+
+      为什么要两边都查，而不是只按 task_id：
+        设备上报那一刻如果**没有执行中的任务**，落库时 task_id 就是空的
+        （试飞、机库自检、提前开机）。但管理员事后看这条任务时，
+        那些「当时没主」的告警其实和它有关 —— 比如设备提前自检报的电池高温，
+        或者飞手还没点「开始执行」就先起飞了。只按 task_id 查会漏掉它们。
+
+      为什么不用「只要设备一致就算」：那会把**这台设备历史上所有**的告警都拉进来，
+      包括上个月那条任务期间的。所以必须带时间窗。
+
+      时间窗取 task 的实际起止；**起止可能为空**（任务还没开始、或手工改过库），
+      这时就退化成只按 task_id 查 —— 宁可少给，不要给错。
+
+      排序按发生时刻升序：详情页里它是一条时间线的一部分，不是待办列表
+      （与告警中心「未处理的排前面」的排序刻意不同）。
+    -->
+    <select id="selectInTaskWindow" resultType="cn.tedu.drone.task.pojo.AlertPO">
+        SELECT <include refid="alertColumns"/>
+        FROM task_alert a
+        WHERE a.task_id = #{taskId}
+        <if test="deviceCode != null and deviceCode != '' and from != null and to != null">
+            OR (a.device_code = #{deviceCode}
+                AND a.observed_at BETWEEN #{from} AND #{to})
+        </if>
+        ORDER BY a.observed_at, a.id
+    </select>
+
+    <!--
+      一批任务各自还有多少条未处理告警（飞手端任务卡片角标）。
+
+      为什么是 GROUP BY 而不是逐条任务查：一页 10 条任务就是 10 次往返。
+      为什么只数 pending / handling：角标回答「有什么要管的」，
+      处理完就该消失 —— 口径和告警页把未处理的排最前面是一致的。
+
+      critical_count 用 SUM(CASE ...) 而不是再来一条 SQL：
+      两个数来自同一批行，分开查会有「两次查询之间状态变了」的缝隙，
+      于是出现「共 3 条、其中 4 条是严重的」这种自相矛盾的角标。
+      注意 MySQL 里 SUM 在没有任何行时返回 NULL，但这里因为带了 GROUP BY，
+      没有行的分组压根不会出现在结果里，所以不存在这个坑。
+    -->
+    <select id="countOpenByTaskIds" resultType="cn.tedu.drone.task.pojo.TaskAlertCount">
+        SELECT a.task_id,
+               COUNT(*) AS total,
+               SUM(CASE WHEN a.severity = 'critical' THEN 1 ELSE 0 END) AS critical_count
+        FROM task_alert a
+        WHERE a.status IN ('pending', 'handling')
+          AND a.task_id IN
+        <foreach collection="taskIds" item="taskId" open="(" separator="," close=")">
+            #{taskId}
+        </foreach>
+        GROUP BY a.task_id
+    </select>
+
+    <!--
+      认领：待处理 → 处理中。
+      AND status = 'pending' 是比较并交换 —— 两个人同时点认领，只有一个能成功。
+      不写 handled_by：那三列是「谁处理完的」，认领还没到那一步。
+    -->
+    <update id="claim">
+        UPDATE task_alert
+        SET status = 'handling'
+        WHERE id = #{id}
+          AND status = 'pending'
+    </update>
+
+    <!--
+      收尾：→ 已处理 / 误报，同时记下处理人、完成时刻、处置说明。
+
+      AND status IN (...) 由调用方传允许的起始状态（两个动作允许的集合不同），
+      这样「动作 → 允许来源」那张表只在 AlertStatusFlow 里定义一次，
+      不会在这里又写死一份、日后两边对不上。
+
+      handle_note 必须写：没有说明的「已处理」和不处理没有区别。
+      （必填是在 Service 层校验的 —— 这里不写 IFNULL 之类的兜底，
+       因为「悄悄存个空说明」比「报错让人补上」糟糕得多。）
+    -->
+    <update id="close">
+        UPDATE task_alert
+        SET status          = #{newStatus},
+            handled_by      = #{handledBy},
+            handled_by_name = #{handledByName},
+            handled_at      = #{handledAt},
+            handle_note     = #{note}
+        WHERE id = #{id}
+          AND status IN
+          <foreach collection="expectStatuses" item="st" open="(" separator="," close=")">
+              #{st}
+          </foreach>
+    </update>
+
+
+    <!--
+      未处理告警按级别分组（大屏的告警分布图）。
+      pilotId 非空时 join task 限定「派给他的任务上」—— 飞手看不到别人的告警，
+      而告警表上只有 task_id，没有 pilot_id，必须 join 才知道归谁。
+      用 LEFT JOIN 而不是 JOIN：task_id 为空的告警（设备自检那种「当时没主」的）
+      在管理侧的总览里也该算进来。
+    -->
+    <select id="countOpenGroupBySeverity" resultType="java.util.Map">
+        SELECT a.severity AS severity, COUNT(*) AS cnt
+        FROM task_alert a
+        <if test="pilotId != null">
+            JOIN `task` t ON t.id = a.task_id AND t.pilot_id = #{pilotId}
+        </if>
+        WHERE a.status IN ('pending', 'handling')
+        GROUP BY a.severity
+    </select>
+
+    <!-- 「今日新增」：按发生时刻算，不是按我们收到的时刻 -->
+    <select id="countObservedSince" resultType="long">
+        SELECT COUNT(*)
+        FROM task_alert a
+        WHERE a.observed_at &gt;= #{from}
+    </select>
+
+</mapper>

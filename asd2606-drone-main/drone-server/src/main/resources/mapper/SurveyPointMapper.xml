@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.route.dao.SurveyPointDao">
+
+    <sql id="pointColumns">
+        p.id, p.code, p.name, p.lng, p.lat, p.alt, p.category, p.remark,
+        p.create_by, p.create_by_name, p.create_time, p.update_time
+    </sql>
+
+    <!-- 列表与计数共用；两处写歪就会出现「总数和翻页对不上」 -->
+    <sql id="pointCondition">
+        <where>
+            <if test="keyword != null and keyword != ''">
+                AND (p.name LIKE CONCAT('%', #{keyword}, '%')
+                    OR p.code LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+            <if test="category != null and category != ''">
+                AND p.category = #{category}
+            </if>
+        </where>
+    </sql>
+
+    <!-- 按名称排：点位库多半是「同一类点连续建」的，按名字排最好找；
+         同名的再按 id 兜底，保证分页时顺序稳定（顺序不稳定会让同一条数据在两页里都出现） -->
+    <select id="selectByCondition" resultType="cn.tedu.drone.route.pojo.SurveyPointPO">
+        SELECT <include refid="pointColumns"/>
+        FROM `survey_point` p
+        <include refid="pointCondition"/>
+        ORDER BY p.name, p.id
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countByCondition" resultType="long">
+        SELECT COUNT(*)
+        FROM `survey_point` p
+        <include refid="pointCondition"/>
+    </select>
+
+    <select id="selectById" resultType="cn.tedu.drone.route.pojo.SurveyPointPO">
+        SELECT <include refid="pointColumns"/>
+        FROM `survey_point` p
+        WHERE p.id = #{id}
+    </select>
+
+    <select id="selectByCode" resultType="cn.tedu.drone.route.pojo.SurveyPointPO">
+        SELECT <include refid="pointColumns"/>
+        FROM `survey_point` p
+        WHERE p.code = #{code}
+        LIMIT 1
+    </select>
+
+    <!-- 批量按 id 取（航线详情里一次把用到的点位都查出来，不逐条查） -->
+    <select id="selectByIds" resultType="cn.tedu.drone.route.pojo.SurveyPointPO">
+        SELECT <include refid="pointColumns"/>
+        FROM `survey_point` p
+        WHERE p.id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `survey_point` (code, name, lng, lat, alt, category, remark,
+                                    create_by, create_by_name)
+        VALUES (#{code}, #{name}, #{lng}, #{lat}, #{alt}, #{category}, #{remark},
+                #{createBy}, #{createByName})
+    </insert>
+
+    <!--
+      点位本体：**整份覆盖**，不是「按非空字段拼」。
+      编辑表单会带上完整的一项（名称与坐标是必填的，Service 已经校验过），
+      而用 <set><if> 会让「清空备注/编号」做不到 —— 传空串会被当成 null、
+      被 <if> 跳过，用户看到的是「保存成功，但备注还在」。
+
+      顺带一提：code 是**可以**改的（和设备的编号不同）——
+      它是客户给的外部标识，客户改了我们就得跟着改，
+      而且没有「被历史数据引用」的约束：航线上的点是复制走的，不靠 code 关联。
+    -->
+    <update id="update">
+        UPDATE `survey_point`
+        SET code     = #{code},
+            name     = #{name},
+            lng      = #{lng},
+            lat      = #{lat},
+            alt      = #{alt},
+            category = #{category},
+            remark   = #{remark}
+        WHERE id = #{id}
+    </update>
+
+    <!--
+      删除点位不会影响任何路线：route_point 里存的是**复制过去**的 lng/lat，
+      point_id 只是一条「它当初从哪来」的线索（可能为 NULL）。
+      所以这里不做「有没有被引用」的检查 —— 有也照删，航线不该被点位库的清理卡住。
+    -->
+    <delete id="deleteById">
+        DELETE FROM `survey_point` WHERE id = #{id}
+    </delete>
+
+</mapper>

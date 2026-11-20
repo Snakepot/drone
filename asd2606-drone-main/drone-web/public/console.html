@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>控制台 | 无人机管理平台</title>
+<style>
+  :root {
+    --cyan: #22d3ee;
+    --blue: #3b82f6;
+    --violet: #8b5cf6;
+    --green: #34d399;
+    --amber: #fbbf24;
+    --red: #f87171;
+
+    --text: #e6f1ff;
+    --text-2: rgba(230, 241, 255, 0.72);
+    --muted: rgba(230, 241, 255, 0.48);
+    --line: rgba(120, 190, 255, 0.14);
+    --line-strong: rgba(120, 190, 255, 0.26);
+    --panel: rgba(10, 22, 44, 0.62);
+    --panel-2: rgba(8, 18, 38, 0.72);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body { height: 100%; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+    font-size: 14px;
+    color: var(--text);
+    background: #03060f;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- 背景 ---------- */
+  .backdrop { position: fixed; inset: 0; z-index: 0; }
+
+  .backdrop::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(110% 80% at 8% 0%, rgba(34, 211, 238, 0.10), transparent 55%),
+      radial-gradient(100% 80% at 95% 100%, rgba(139, 92, 246, 0.12), transparent 55%),
+      linear-gradient(160deg, #061024, #03060f 70%);
+  }
+
+  .backdrop::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(100% 80% at 50% 20%, #000 15%, transparent 80%);
+    -webkit-mask-image: radial-gradient(100% 80% at 50% 20%, #000 15%, transparent 80%);
+  }
+
+  .glow {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(100px);
+    opacity: 0.42;
+  }
+  .glow--cyan { width: 420px; height: 420px; top: -160px; left: -100px; background: rgba(34, 211, 238, 0.34); }
+  .glow--violet { width: 460px; height: 460px; bottom: -200px; right: -140px; background: rgba(139, 92, 246, 0.28); }
+
+  /* ---------- 骨架 ---------- */
+  .app {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    height: 100%;
+  }
+
+  /* ---------- 侧边栏 ---------- */
+  .sidebar {
+    width: 236px;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(180deg, rgba(8, 20, 42, 0.9), rgba(5, 12, 28, 0.86));
+    border-right: 1px solid var(--line);
+    backdrop-filter: blur(18px);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 22px 20px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .brand__mark {
+    width: 38px; height: 38px;
+    flex: none;
+    display: grid; place-items: center;
+    border-radius: 11px;
+    background: linear-gradient(140deg, rgba(34, 211, 238, 0.22), rgba(139, 92, 246, 0.22));
+    border: 1px solid rgba(34, 211, 238, 0.45);
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.28), inset 0 0 14px rgba(34, 211, 238, 0.12);
+  }
+
+  .brand__mark svg { width: 22px; height: 22px; }
+
+  .brand__text strong { display: block; font-size: 14.5px; letter-spacing: 1.4px; font-weight: 600; }
+  .brand__text span { font-size: 9.5px; letter-spacing: 2.6px; color: var(--muted); text-transform: uppercase; }
+
+  .menu { flex: 1; padding: 16px 12px; overflow-y: auto; }
+
+  .menu__group {
+    padding: 14px 10px 8px;
+    font-size: 10.5px;
+    letter-spacing: 2px;
+    color: rgba(230, 241, 255, 0.3);
+    text-transform: uppercase;
+  }
+
+  .menu__item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 11px 13px;
+    margin-bottom: 4px;
+    border-radius: 10px;
+    color: var(--text-2);
+    font-size: 13.5px;
+    text-decoration: none;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background 0.22s, color 0.22s, border-color 0.22s;
+  }
+
+  .menu__item svg { width: 17px; height: 17px; flex: none; opacity: 0.85; }
+
+  .menu__item:hover {
+    background: rgba(34, 211, 238, 0.07);
+    color: var(--text);
+    border-color: rgba(34, 211, 238, 0.18);
+  }
+
+  /* 当前选中：左侧发光条 + 渐变底 */
+  .menu__item.is-active {
+    color: #a5f3fc;
+    background: linear-gradient(100deg, rgba(34, 211, 238, 0.18), rgba(59, 130, 246, 0.08));
+    border-color: rgba(34, 211, 238, 0.4);
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.16), inset 0 0 18px rgba(34, 211, 238, 0.06);
+  }
+
+  .menu__item.is-active::before {
+    content: '';
+    position: absolute;
+    left: -12px; top: 50%;
+    width: 3px; height: 20px;
+    margin-top: -10px;
+    border-radius: 0 3px 3px 0;
+    background: linear-gradient(180deg, var(--cyan), var(--violet));
+    box-shadow: 0 0 12px rgba(34, 211, 238, 0.9);
+  }
+
+  .menu__item.is-active svg { opacity: 1; color: var(--cyan); }
+
+  .menu__item.is-disabled {
+    color: rgba(230, 241, 255, 0.28);
+    cursor: not-allowed;
+  }
+  .menu__item.is-disabled:hover { background: none; border-color: transparent; color: rgba(230, 241, 255, 0.28); }
+
+  .menu__badge {
+    margin-left: auto;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    color: rgba(230, 241, 255, 0.5);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--line);
+  }
+
+  .sidebar__foot {
+    padding: 14px 20px 18px;
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+    line-height: 1.7;
+    color: rgba(230, 241, 255, 0.3);
+  }
+
+  .sidebar__status {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 5px;
+    color: rgba(165, 243, 252, 0.8);
+  }
+
+  .sidebar__status i {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--cyan);
+    box-shadow: 0 0 8px var(--cyan);
+    animation: blink 1.8s ease-in-out infinite;
+  }
+
+  @keyframes blink { 50% { opacity: 0.2; } }
+
+  /* ---------- 主区域 ---------- */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  .topbar {
+    height: 64px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 24px;
+    background: rgba(6, 14, 30, 0.6);
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(14px);
+  }
+
+  .topbar__crumbs { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+  .topbar__crumbs .sep { color: rgba(230, 241, 255, 0.25); }
+  .topbar__crumbs .now { color: var(--text); font-weight: 500; }
+  .topbar__crumbs .prev { color: var(--muted); }
+
+  .topbar__right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+
+  .ai-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 13px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    letter-spacing: 0.6px;
+    color: #a5f3fc;
+    background: rgba(34, 211, 238, 0.1);
+    border: 1px solid rgba(34, 211, 238, 0.3);
+  }
+
+  .ai-chip i {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--cyan);
+    box-shadow: 0 0 8px var(--cyan);
+    animation: blink 1.6s ease-in-out infinite;
+  }
+
+  .user {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding-left: 16px;
+    border-left: 1px solid var(--line);
+    cursor: pointer;
+    color: var(--text-2);
+    transition: color 0.2s;
+  }
+
+  .user:hover { color: var(--cyan); }
+
+  .user__avatar {
+    width: 30px; height: 30px;
+    display: grid; place-items: center;
+    border-radius: 9px;
+    background: linear-gradient(140deg, rgba(34, 211, 238, 0.2), rgba(139, 92, 246, 0.2));
+    border: 1px solid rgba(34, 211, 238, 0.35);
+  }
+
+  .user__avatar svg { width: 16px; height: 16px; color: #a5f3fc; }
+  .user__name { font-size: 13.5px; }
+
+  .content { flex: 1; overflow-y: auto; padding: 24px; }
+
+  /* ---------- 卡片 ---------- */
+  .page { display: none; }
+  .page.is-active { display: block; animation: pageIn 0.35s ease both; }
+
+  @keyframes pageIn {
+    from { opacity: 0; transform: translateY(10px); }
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+
+  .stat {
+    padding: 16px 18px;
+    border-radius: 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    backdrop-filter: blur(10px);
+    transition: border-color 0.3s, transform 0.3s;
+  }
+
+  .stat:hover { border-color: rgba(34, 211, 238, 0.45); transform: translateY(-3px); }
+
+  .stat__label { font-size: 12px; color: var(--muted); letter-spacing: 0.6px; }
+
+  .stat__value {
+    margin-top: 6px;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    background: linear-gradient(100deg, #7dd3fc, var(--cyan));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .stat__value.is-violet { background: linear-gradient(100deg, #c4b5fd, var(--violet)); -webkit-background-clip: text; background-clip: text; }
+  .stat__value.is-green { background: linear-gradient(100deg, #6ee7b7, var(--green)); -webkit-background-clip: text; background-clip: text; }
+
+  .card {
+    position: relative;
+    border-radius: 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    backdrop-filter: blur(16px);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+  }
+
+  .card::before,
+  .card::after {
+    content: '';
+    position: absolute;
+    width: 18px; height: 18px;
+    border: 2px solid rgba(34, 211, 238, 0.5);
+    pointer-events: none;
+  }
+  .card::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; border-radius: 16px 0 0 0; }
+  .card::after { bottom: -1px; right: -1px; border-left: 0; border-top: 0; border-radius: 0 0 16px 0; }
+
+  .card__head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .card__title { font-size: 15px; font-weight: 600; letter-spacing: 0.4px; }
+  .card__title small { display: block; margin-top: 3px; font-size: 11.5px; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+
+  .card__tools { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+
+  /* ---------- 控件 ---------- */
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0 13px;
+    height: 36px;
+    border-radius: 9px;
+    background: rgba(4, 12, 28, 0.72);
+    border: 1px solid rgba(120, 190, 255, 0.18);
+    transition: border-color 0.25s, box-shadow 0.25s;
+  }
+
+  .search:focus-within {
+    border-color: rgba(34, 211, 238, 0.7);
+    box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.12);
+  }
+
+  .search svg { width: 15px; height: 15px; flex: none; color: rgba(140, 190, 240, 0.7); }
+
+  .search input {
+    width: 200px;
+    font-size: 13px;
+    font-family: inherit;
+    color: var(--text);
+    background: none;
+    border: 0;
+    outline: none;
+  }
+
+  .search input::placeholder { color: rgba(230, 241, 255, 0.3); }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 36px;
+    padding: 0 16px;
+    border-radius: 9px;
+    font-size: 13px;
+    font-family: inherit;
+    letter-spacing: 0.4px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: transform 0.22s, box-shadow 0.22s, filter 0.22s, background 0.22s, border-color 0.22s;
+  }
+
+  .btn svg { width: 15px; height: 15px; }
+
+  .btn--primary {
+    color: #03121f;
+    font-weight: 600;
+    background: linear-gradient(120deg, var(--cyan), var(--blue) 65%, var(--violet));
+    box-shadow: 0 8px 22px rgba(34, 211, 238, 0.26);
+  }
+
+  .btn--primary:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(34, 211, 238, 0.4); filter: brightness(1.06); }
+
+  .btn--ghost {
+    color: var(--text-2);
+    background: rgba(34, 211, 238, 0.06);
+    border-color: rgba(120, 190, 255, 0.2);
+  }
+
+  .btn--ghost:hover { color: var(--cyan); border-color: rgba(34, 211, 238, 0.5); background: rgba(34, 211, 238, 0.1); }
+
+  /* ---------- 表格 ---------- */
+  .table-wrap { overflow-x: auto; }
+
+  table { width: 100%; border-collapse: collapse; }
+
+  thead th {
+    padding: 13px 20px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.8px;
+    color: var(--muted);
+    background: rgba(4, 12, 28, 0.5);
+    white-space: nowrap;
+  }
+
+  tbody td {
+    padding: 14px 20px;
+    font-size: 13.5px;
+    color: var(--text-2);
+    border-top: 1px solid rgba(120, 190, 255, 0.07);
+    white-space: nowrap;
+  }
+
+  tbody tr { transition: background 0.2s; }
+  tbody tr:hover { background: rgba(34, 211, 238, 0.05); }
+
+  .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #a5f3fc; letter-spacing: 0.4px; }
+  .strong { color: var(--text); font-weight: 500; }
+
+  /* 状态药丸 */
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    letter-spacing: 0.3px;
+  }
+
+  .tag::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 7px currentColor; }
+
+  .tag--cyan { color: #7dd3fc; background: rgba(34, 211, 238, 0.12); border: 1px solid rgba(34, 211, 238, 0.32); }
+  .tag--green { color: #6ee7b7; background: rgba(52, 211, 153, 0.12); border: 1px solid rgba(52, 211, 153, 0.32); }
+  .tag--amber { color: #fcd34d; background: rgba(251, 191, 36, 0.12); border: 1px solid rgba(251, 191, 36, 0.32); }
+  .tag--red { color: #fca5a5; background: rgba(248, 113, 113, 0.12); border: 1px solid rgba(248, 113, 113, 0.32); }
+  .tag--violet { color: #c4b5fd; background: rgba(139, 92, 246, 0.12); border: 1px solid rgba(139, 92, 246, 0.32); }
+  .tag--grey { color: rgba(230, 241, 255, 0.55); background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); }
+
+  .ops { display: flex; gap: 14px; }
+
+  .op {
+    font-size: 13px;
+    color: rgba(140, 200, 255, 0.85);
+    cursor: pointer;
+    transition: color 0.2s;
+  }
+
+  .op:hover { color: var(--cyan); }
+  .op--danger { color: rgba(248, 113, 113, 0.85); }
+  .op--danger:hover { color: var(--red); }
+
+  /* ---------- 分页 ---------- */
+  .pager {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 15px 20px;
+    border-top: 1px solid var(--line);
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+
+  .pager__pages { margin-left: auto; display: flex; gap: 6px; }
+
+  .pager__btn {
+    min-width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    padding: 0 9px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    color: var(--text-2);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--line);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .pager__btn:hover { color: var(--cyan); border-color: rgba(34, 211, 238, 0.45); }
+  .pager__btn.is-active {
+    color: #03121f;
+    font-weight: 600;
+    background: linear-gradient(120deg, var(--cyan), var(--blue));
+    border-color: transparent;
+    box-shadow: 0 0 16px rgba(34, 211, 238, 0.4);
+  }
+
+  /* ---------- 占位页 ---------- */
+  .placeholder {
+    display: grid;
+    place-items: center;
+    gap: 10px;
+    padding: 70px 20px;
+    text-align: center;
+  }
+
+  .placeholder svg { width: 42px; height: 42px; color: rgba(120, 190, 255, 0.35); }
+  .placeholder p { font-size: 13.5px; color: var(--muted); }
+
+  /* ---------- 退出确认弹层 ---------- */
+  .mask {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    display: none;
+    place-items: center;
+    background: rgba(2, 6, 16, 0.66);
+    backdrop-filter: blur(4px);
+  }
+
+  .mask.is-open { display: grid; }
+
+  .dialog {
+    width: 340px;
+    padding: 26px 24px 20px;
+    border-radius: 16px;
+    background: rgba(9, 20, 40, 0.95);
+    border: 1px solid rgba(120, 190, 255, 0.24);
+    box-shadow: 0 26px 60px rgba(0, 0, 0, 0.6);
+    animation: pageIn 0.25s ease both;
+  }
+
+  .dialog h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+  .dialog p { font-size: 13px; line-height: 1.7; color: var(--muted); }
+
+  .dialog__foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+
+  /* ---------- 滚动条 ---------- */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(120, 190, 255, 0.16); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(120, 190, 255, 0.3); }
+
+  /* ---------- 响应式 ---------- */
+  @media (max-width: 900px) {
+    .sidebar { width: 68px; }
+    .brand { justify-content: center; padding: 18px 10px; }
+    .brand__text, .menu__group, .menu__badge, .sidebar__foot { display: none; }
+    .menu__item { justify-content: center; padding: 12px 0; }
+    .menu__item span { display: none; }
+    .menu__item.is-active::before { left: -12px; }
+    .search input { width: 120px; }
+    .ai-chip { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="backdrop">
+  <div class="glow glow--cyan"></div>
+  <div class="glow glow--violet"></div>
+</div>
+
+<div class="app">
+  <!-- ============ 左侧菜单 ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand__mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#67e8f9" stroke-width="1.6" stroke-linecap="round">
+          <path d="M12 12 5 5M12 12l7-7M12 12l-7 7M12 12l7 7" />
+          <circle cx="5" cy="5" r="2.6" /><circle cx="19" cy="5" r="2.6" />
+          <circle cx="5" cy="19" r="2.6" /><circle cx="19" cy="19" r="2.6" />
+          <rect x="9.6" y="9.6" width="4.8" height="4.8" rx="1.6" />
+        </svg>
+      </div>
+      <div class="brand__text">
+        <strong>无人机管理平台</strong>
+        <span>DroneOps</span>
+      </div>
+    </div>
+
+    <nav class="menu">
+      <div class="menu__group">业务管理</div>
+
+      <a class="menu__item is-active" data-page="staff" data-title="员工管理">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <circle cx="12" cy="8" r="3.6" />
+          <path d="M4.8 20c0-3.7 3.3-6.2 7.2-6.2s7.2 2.5 7.2 6.2" />
+        </svg>
+        <span>员工管理</span>
+      </a>
+
+      <a class="menu__item" data-page="device" data-title="设备管理">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <rect x="7.5" y="7.5" width="9" height="9" rx="2.4" />
+          <path d="M10 4h4M10 20h4M4 10v4M20 10v4M9.2 4.6 7.5 7.5M14.8 4.6l1.7 2.9M9.2 19.4l-1.7-2.9M14.8 19.4l1.7-2.9"/>
+        </svg>
+        <span>设备管理</span>
+      </a>
+
+      <div class="menu__group">后续规划</div>
+
+      <span class="menu__item is-disabled">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <rect x="4" y="4.5" width="16" height="15" rx="2.6" />
+          <path d="M8 9.5h8M8 13h8M8 16.5h5" />
+        </svg>
+        <span>任务管理</span>
+        <span class="menu__badge">待开发</span>
+      </span>
+
+      <span class="menu__item is-disabled">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <path d="M12 4.5a5.2 5.2 0 0 1 5.2 5.2c0 3.6 1.3 5 1.3 5H5.5s1.3-1.4 1.3-5A5.2 5.2 0 0 1 12 4.5Z" />
+          <path d="M10.2 17.6a1.9 1.9 0 0 0 3.6 0" />
+        </svg>
+        <span>告警中心</span>
+        <span class="menu__badge">待开发</span>
+      </span>
+
+      <span class="menu__item is-disabled">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <path d="M4.5 19V9.5M9.8 19V4.5M15.2 19v-7M20.5 19v-11" />
+        </svg>
+        <span>数据看板</span>
+        <span class="menu__badge">待开发</span>
+      </span>
+    </nav>
+
+    <div class="sidebar__foot">
+      <div class="sidebar__status"><i></i>AI 巡检引擎运行中</div>
+      DroneOps v0.0.1
+    </div>
+  </aside>
+
+  <!-- ============ 主区域 ============ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar__crumbs">
+        <span class="prev">业务管理</span>
+        <span class="sep">/</span>
+        <span class="now" id="crumbNow">员工管理</span>
+      </div>
+
+      <div class="topbar__right">
+        <span class="ai-chip"><i></i>AI 智能巡检引擎已就绪</span>
+
+        <div class="user" id="userEntry">
+          <div class="user__avatar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+              <circle cx="12" cy="8" r="3.6" />
+              <path d="M4.8 20c0-3.7 3.3-6.2 7.2-6.2s7.2 2.5 7.2 6.2" />
+            </svg>
+          </div>
+          <span class="user__name">张伟</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="content">
+      <!-- ========== 员工管理 ========== -->
+      <section class="page is-active" id="page-staff">
+        <div class="stats">
+          <div class="stat">
+            <div class="stat__label">员工总数</div>
+            <div class="stat__value">6</div>
+          </div>
+          <div class="stat">
+            <div class="stat__label">在岗可用</div>
+            <div class="stat__value is-green">3</div>
+          </div>
+          <div class="stat">
+            <div class="stat__label">已禁用</div>
+            <div class="stat__value is-violet">3</div>
+          </div>
+          <div class="stat">
+            <div class="stat__label">飞手占比</div>
+            <div class="stat__value">67%</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__head">
+            <div class="card__title">
+              员工列表
+              <small>账号、角色与启停用状态维护</small>
+            </div>
+            <div class="card__tools">
+              <label class="search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                  <circle cx="11" cy="11" r="6.2" /><path d="m19.5 19.5-3.6-3.6" />
+                </svg>
+                <input type="text" placeholder="搜索姓名或手机号">
+              </label>
+              <button class="btn btn--ghost" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                  <path d="M4 7h16M7 12h10M10 17h4" />
+                </svg>
+                筛选
+              </button>
+              <button class="btn btn--primary" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+                新增员工
+              </button>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>姓名</th><th>登录账号</th><th>手机号</th><th>角色</th><th>在线状态</th><th>账号状态</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="strong">张伟</td>
+                  <td class="code">13800001001</td>
+                  <td>138 0000 1001</td>
+                  <td><span class="tag tag--cyan">飞手</span></td>
+                  <td><span class="tag tag--grey">空闲</span></td>
+                  <td><span class="tag tag--green">启用</span></td>
+                  <td><div class="ops"><span class="op">编辑</span><span class="op op--danger">禁用</span></div></td>
+                </tr>
+                <tr>
+                  <td class="strong">李明</td>
+                  <td class="code">13800001002</td>
+                  <td>138 0000 1002</td>
+                  <td><span class="tag tag--cyan">飞手</span></td>
+                  <td><span class="tag tag--amber">作业中</span></td>
+                  <td><span class="tag tag--red">禁用</span></td>
+                  <td><div class="ops"><span class="op">编辑</span><span class="op">启用</span></div></td>
+                </tr>
+                <tr>
+                  <td class="strong">王芳</td>
+                  <td class="code">13800001003</td>
+                  <td>138 0000 1003</td>
+                  <td><span class="tag tag--cyan">飞手</span></td>
+                  <td><span class="tag tag--grey">空闲</span></td>
+                  <td><span class="tag tag--red">禁用</span></td>
+                  <td><div class="ops"><span class="op">编辑</span><span class="op">启用</span></div></td>
+                </tr>
+                <tr>
+                  <td class="strong">赵强</td>
+                  <td class="code">13800001004</td>
+                  <td>138 0000 1004</td>
+                  <td><span class="tag tag--amber">机务</span></td>
+                  <td><span class="tag tag--grey">空闲</span></td>
+                  <td><span class="tag tag--green">启用</span></td>
+                  <td><div class="ops"><span class="op">编辑</span><span class="op op--danger">禁用</span></div></td>
+                </tr>
+                <tr>
+                  <td class="strong">刘洋</td>
+                  <td class="code">13800001005</td>
+                  <td>138 0000 1005</td>
+                  <td><span class="tag tag--violet">管理员</span></td>
+                  <td><span class="tag tag--grey">空闲</span></td>
+                  <td><span class="tag tag--green">启用</span></td>
+                  <td><div class="ops"><span class="op">编辑</span><span class="op op--danger">禁用</span></div></td>
+                </tr>
+                <tr>
+                  <td class="strong">陈静</td>
+                  <td class="code">13800001006</td>
+                  <td>138 0000 1006</td>
+                  <td><span class="tag tag--cyan">飞手</span></td>
+                  <td><span class="tag tag--red">已停飞</span></td>
+                  <td><span class="tag tag--red">禁用</span></td>
+                  <td><div class="ops"><span class="op">编辑</span><span class="op">启用</span></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="pager">
+            <span>共 6 条记录</span>
+            <div class="pager__pages">
+              <span class="pager__btn is-active">1</span>
+              <span class="pager__btn">下一页</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== 设备管理 ========== -->
+      <section class="page" id="page-device">
+        <div class="stats">
+          <div class="stat">
+            <div class="stat__label">设备总数</div>
+            <div class="stat__value">6</div>
+          </div>
+          <div class="stat">
+            <div class="stat__label">在线可用</div>
+            <div class="stat__value is-green">3</div>
+          </div>
+          <div class="stat">
+            <div class="stat__label">飞行中</div>
+            <div class="stat__value is-violet">1</div>
+          </div>
+          <div class="stat">
+            <div class="stat__label">累计飞行时长</div>
+            <div class="stat__value">412 h</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__head">
+            <div class="card__title">
+              设备列表
+              <small>机队档案、状态与飞行记录</small>
+            </div>
+            <div class="card__tools">
+              <label class="search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                  <circle cx="11" cy="11" r="6.2" /><path d="m19.5 19.5-3.6-3.6" />
+                </svg>
+                <input type="text" placeholder="搜索编号或名称">
+              </label>
+              <button class="btn btn--ghost" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                  <path d="M4 7h16M7 12h10M10 17h4" />
+                </svg>
+                筛选
+              </button>
+              <button class="btn btn--primary" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+                新增设备
+              </button>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>设备编号</th><th>名称</th><th>型号</th><th>当前位置</th><th>状态</th><th>飞行次数</th><th>飞行时长</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="code">DRN-0001</td>
+                  <td class="strong">赤鸢一号</td>
+                  <td>Matrice 300 RTK</td>
+                  <td>A 区机库</td>
+                  <td><span class="tag tag--green">待命</span></td>
+                  <td>128</td>
+                  <td>96 h</td>
+                  <td><div class="ops"><span class="op">详情</span><span class="op">编辑</span></div></td>
+                </tr>
+                <tr>
+                  <td class="code">DRN-0002</td>
+                  <td class="strong">赤鸢二号</td>
+                  <td>Matrice 350 RTK</td>
+                  <td>输电走廊 K12 段</td>
+                  <td><span class="tag tag--cyan">飞行中</span></td>
+                  <td>214</td>
+                  <td>173 h</td>
+                  <td><div class="ops"><span class="op">详情</span><span class="op">编辑</span></div></td>
+                </tr>
+                <tr>
+                  <td class="code">DRN-0003</td>
+                  <td class="strong">灰隼一号</td>
+                  <td>Mavic 3 Enterprise</td>
+                  <td>B 区机库</td>
+                  <td><span class="tag tag--amber">充电中</span></td>
+                  <td>76</td>
+                  <td>38 h</td>
+                  <td><div class="ops"><span class="op">详情</span><span class="op">编辑</span></div></td>
+                </tr>
+                <tr>
+                  <td class="code">DRN-0004</td>
+                  <td class="strong">灰隼二号</td>
+                  <td>Mavic 3 Enterprise</td>
+                  <td>B 区机库</td>
+                  <td><span class="tag tag--grey">离线</span></td>
+                  <td>52</td>
+                  <td>27 h</td>
+                  <td><div class="ops"><span class="op">详情</span><span class="op">编辑</span></div></td>
+                </tr>
+                <tr>
+                  <td class="code">DRN-0005</td>
+                  <td class="strong">夜枭一号</td>
+                  <td>Mavic 3 Thermal</td>
+                  <td>检修间</td>
+                  <td><span class="tag tag--red">维护中</span></td>
+                  <td>189</td>
+                  <td>61 h</td>
+                  <td><div class="ops"><span class="op">详情</span><span class="op">编辑</span></div></td>
+                </tr>
+                <tr>
+                  <td class="code">DRN-0006</td>
+                  <td class="strong">风隼一号</td>
+                  <td>FlyCart 30</td>
+                  <td>C 区停机坪</td>
+                  <td><span class="tag tag--green">待命</span></td>
+                  <td>34</td>
+                  <td>17 h</td>
+                  <td><div class="ops"><span class="op">详情</span><span class="op">编辑</span></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="pager">
+            <span>共 6 条记录</span>
+            <div class="pager__pages">
+              <span class="pager__btn is-active">1</span>
+              <span class="pager__btn">下一页</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- ============ 退出确认 ============ -->
+<div class="mask" id="logoutMask">
+  <div class="dialog">
+    <h3>退出登录</h3>
+    <p>退出后需要重新输入账号密码才能进入控制台，确认退出吗？</p>
+    <div class="dialog__foot">
+      <button class="btn btn--ghost" type="button" id="cancelLogout">取消</button>
+      <button class="btn btn--primary" type="button" id="confirmLogout">确认退出</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // 菜单切换
+  var items = document.querySelectorAll('.menu__item[data-page]')
+  var pages = document.querySelectorAll('.page')
+  var crumb = document.getElementById('crumbNow')
+
+  items.forEach(function (item) {
+    item.addEventListener('click', function () {
+      var target = item.dataset.page
+
+      items.forEach(function (i) { i.classList.toggle('is-active', i === item) })
+      pages.forEach(function (p) { p.classList.toggle('is-active', p.id === 'page-' + target) })
+
+      crumb.textContent = item.dataset.title
+    })
+  })
+
+  // 退出确认
+  var mask = document.getElementById('logoutMask')
+
+  document.getElementById('userEntry').addEventListener('click', function () {
+    mask.classList.add('is-open')
+  })
+
+  document.getElementById('cancelLogout').addEventListener('click', function () {
+    mask.classList.remove('is-open')
+  })
+
+  document.getElementById('confirmLogout').addEventListener('click', function () {
+    // 原型阶段没有真实会话，这里只做跳转演示
+    window.location.href = 'login.html'
+  })
+
+  mask.addEventListener('click', function (e) {
+    if (e.target === mask) mask.classList.remove('is-open')
+  })
+
+  // 点击暂未开放的菜单给出提示
+  document.querySelectorAll('.menu__item.is-disabled').forEach(function (item) {
+    item.addEventListener('click', function () {
+      var label = item.querySelector('span').textContent
+      alert('「' + label + '」还在开发中，敬请期待')
+    })
+  })
+})()
+</script>
+</body>
+</html>

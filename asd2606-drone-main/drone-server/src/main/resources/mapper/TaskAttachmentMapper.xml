@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.task.dao.TaskAttachmentDao">
+
+    <!--
+      列表要展示的列。和 task_alert 的 alertColumns 同一个思路：
+      **不在列表里带大字段**。这张表没有大字段，但有一个例外要留意 ——
+      storage_key / file_path 是服务端内部的东西，任何返回给前端的路径
+      都不该经过它们（下载走接口，见 TaskAttachmentVO 的注释）。
+    -->
+    <sql id="attachmentColumns">
+        id, task_id, alert_id, file_name, file_path, storage, storage_key,
+        sha256, mime_type, file_type, file_size, sort_no, description,
+        upload_by, upload_by_name, create_time
+    </sql>
+
+    <!-- useGeneratedKeys：插入后要把自增主键回填到入参对象上，
+         调用方紧接着要用这个 id 返回给前端（前端拿着它去下载） -->
+    <insert id="insert" parameterType="cn.tedu.drone.task.pojo.TaskAttachmentPO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO task_attachment (task_id, alert_id, file_name, file_path,
+                                     storage, storage_key, sha256, mime_type,
+                                     file_type, file_size, sort_no, description,
+                                     upload_by, upload_by_name)
+        VALUES (#{taskId}, #{alertId}, #{fileName}, #{filePath},
+                #{storage}, #{storageKey}, #{sha256}, #{mimeType},
+                #{fileType}, #{fileSize}, #{sortNo}, #{description},
+                #{uploadBy}, #{uploadByName})
+    </insert>
+
+    <select id="selectById" resultType="cn.tedu.drone.task.pojo.TaskAttachmentPO">
+        SELECT <include refid="attachmentColumns"/>
+        FROM task_attachment
+        WHERE id = #{id}
+    </select>
+
+    <!-- 按任务查（报告详情页的附件清单）。sort_no 在前：报告里的照片顺序由飞手选定 -->
+    <select id="selectByTaskId" resultType="cn.tedu.drone.task.pojo.TaskAttachmentPO">
+        SELECT <include refid="attachmentColumns"/>
+        FROM task_attachment
+        WHERE task_id = #{taskId}
+        ORDER BY sort_no, id
+    </select>
+
+    <!-- 只数不改：提交报告时校验附件归属，少了就说明有人填了别人任务的附件 id -->
+    <select id="countByIdsAndTask" resultType="int">
+        SELECT COUNT(*)
+        FROM task_attachment
+        WHERE task_id = #{taskId}
+          AND id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <!-- 排展示顺序。AND task_id 是越权保护，和上面同一条理由 -->
+    <update id="updateSortNo">
+        UPDATE task_attachment
+        SET sort_no = #{sortNo}
+        WHERE id = #{id}
+          AND task_id = #{taskId}
+    </update>
+
+    <!--
+      按一批告警 id 查附件。
+
+      排序按 sort_no 再按 id：sort_no 是留给「报告里照片要有次序」的，
+      现场上报目前都是默认值 0，所以实际按上传先后（id）排。
+      两者一起写，是为了将来报告线用了 sort_no 之后，这里的行为不用改。
+    -->
+    <select id="selectByAlertIds" resultType="cn.tedu.drone.task.pojo.TaskAttachmentPO">
+        SELECT <include refid="attachmentColumns"/>
+        FROM task_attachment
+        WHERE alert_id IN
+        <foreach collection="alertIds" item="alertId" open="(" separator="," close=")">
+            #{alertId}
+        </foreach>
+        ORDER BY sort_no, id
+    </select>
+
+    <!--
+      把附件挂到告警上。
+
+      AND task_id = #{taskId} 是越权保护，理由见 TaskAttachmentDao 的注释。
+      另外 AND alert_id IS NULL 的意思：**不覆盖已经挂到别的告警上的附件**。
+      不做这个限制的话，A 告警可以「抢走」B 告警已经用掉的附件，
+      于是 B 的照片会在列表里凭空消失 —— 这种数据错乱比越权更隐蔽。
+    -->
+    <update id="bindToAlert">
+        UPDATE task_attachment
+        SET alert_id = #{alertId}
+        WHERE task_id = #{taskId}
+          AND alert_id IS NULL
+          AND id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </update>
+
+</mapper>

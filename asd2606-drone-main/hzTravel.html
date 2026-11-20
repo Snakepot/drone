@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>杭州元旦 5 日 · 行程地图</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
+<style>
+  :root{
+    --ink:#1f2430;
+    --ink-2:#4b5365;
+    --ink-3:#8a91a0;
+    --line:#e6e3dc;
+    --bg:#f7f5f0;
+    --card:#fffdf9;
+    --accent:#b5563c;
+    --shadow:0 1px 2px rgba(31,36,48,.05),0 8px 24px rgba(31,36,48,.06);
+    --d1:#c0603f;
+    --d2:#3d8b7d;
+    --d3:#7a5ea8;
+    --d4:#b8891f;
+    --d5:#3f6f9e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:0 20px 72px}
+
+  /* ---------- 头部 ---------- */
+  header{padding:56px 0 28px;border-bottom:1px solid var(--line)}
+  .eyebrow{font-size:12px;letter-spacing:.18em;color:var(--accent);font-weight:600;text-transform:uppercase}
+  h1{
+    font-family:"Songti SC","Noto Serif SC",Georgia,serif;
+    font-size:clamp(30px,5vw,46px);line-height:1.25;margin:10px 0 12px;font-weight:600;letter-spacing:.01em;
+  }
+  .sub{color:var(--ink-2);font-size:15px;max-width:720px;margin:0}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+  .chip{
+    font-size:13px;color:var(--ink-2);background:#fff;border:1px solid var(--line);
+    padding:5px 12px;border-radius:999px;
+  }
+  .chip b{color:var(--ink);font-weight:600}
+
+  /* ---------- 天气 ---------- */
+  .weather{
+    margin-top:26px;background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:18px 20px;box-shadow:var(--shadow);display:flex;gap:16px;align-items:flex-start;
+  }
+  .weather .icon{font-size:26px;line-height:1}
+  .weather h3{margin:0 0 4px;font-size:15px}
+  .weather p{margin:0;font-size:13.5px;color:var(--ink-2)}
+  .weather .warn{color:var(--accent)}
+
+  /* ---------- 地图 ---------- */
+  .map-block{margin-top:28px}
+  .map-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  .map-head h2{font-size:18px;margin:0}
+  .map-head span{font-size:12.5px;color:var(--ink-3)}
+  #map{
+    height:min(62vh,520px);border-radius:18px;border:1px solid var(--line);
+    box-shadow:var(--shadow);overflow:hidden;background:#e9e6df;
+  }
+  .leaflet-container{font-family:inherit;border-radius:18px}
+  .leaflet-popup-content{margin:12px 14px;font-size:13px}
+  .leaflet-popup-content b{display:block;margin-bottom:2px}
+
+  .mk{
+    width:28px;height:28px;border-radius:50%;color:#fff;font-size:12.5px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;
+    border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);
+  }
+
+  /* ---------- 日切换 ---------- */
+  .tabs{display:flex;gap:8px;overflow-x:auto;padding:22px 0 6px;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{
+    flex:0 0 auto;border:1px solid var(--line);background:#fff;color:var(--ink-2);
+    padding:9px 16px;border-radius:999px;font-size:13.5px;cursor:pointer;transition:.18s;
+    font-family:inherit;
+  }
+  .tab:hover{border-color:#cfcac0}
+  .tab.on{color:#fff;border-color:transparent;font-weight:600}
+  .tab.on[data-day="0"]{background:var(--ink)}
+  .tab.on[data-day="1"]{background:var(--d1)}
+  .tab.on[data-day="2"]{background:var(--d2)}
+  .tab.on[data-day="3"]{background:var(--d3)}
+  .tab.on[data-day="4"]{background:var(--d4)}
+  .tab.on[data-day="5"]{background:var(--d5)}
+
+  /* ---------- 每日面板 ---------- */
+  .day-panel{display:none}
+  .day-panel.on{display:block;animation:fade .25s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  .day-top{
+    display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;
+    margin:18px 0 8px;padding:16px 18px;background:var(--card);border:1px solid var(--line);
+    border-radius:14px;box-shadow:var(--shadow);
+  }
+  .day-top .left{display:flex;align-items:center;gap:12px}
+  .day-dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
+  .day-top h2{font-size:17px;margin:0}
+  .day-top .when{font-size:12.5px;color:var(--ink-3);margin-top:1px}
+  .btn-amap{
+    display:inline-flex;align-items:center;gap:7px;text-decoration:none;
+    background:var(--ink);color:#fff;font-size:13.5px;padding:9px 16px;border-radius:10px;
+    transition:.18s;white-space:nowrap;
+  }
+  .btn-amap:hover{background:#333a4a}
+
+  /* ---------- 卡片 ---------- */
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));gap:18px;margin-top:16px}
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;
+    box-shadow:var(--shadow);display:flex;flex-direction:column;transition:.2s;
+  }
+  .card:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(31,36,48,.05),0 14px 34px rgba(31,36,48,.1)}
+  .thumb{position:relative;aspect-ratio:16/10;background:#e8e4dc;overflow:hidden}
+  .thumb img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .5s}
+  .card:hover .thumb img{transform:scale(1.03)}
+  .thumb .fallback{
+    position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    color:#fff;font-family:"Songti SC",serif;font-size:20px;letter-spacing:.08em;
+  }
+  .thumb.broken img{display:none}
+  .thumb.broken .fallback{display:flex}
+  .badge{
+    position:absolute;left:12px;top:12px;width:26px;height:26px;border-radius:50%;
+    background:rgba(31,36,48,.82);color:#fff;font-size:12.5px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);
+  }
+  .stay{
+    position:absolute;right:12px;top:12px;font-size:11.5px;color:#fff;
+    background:rgba(31,36,48,.62);padding:3px 9px;border-radius:999px;backdrop-filter:blur(4px);
+  }
+  .body{padding:16px 17px 15px;display:flex;flex-direction:column;flex:1}
+  .body h3{margin:0;font-size:16.5px;letter-spacing:.01em}
+  .rate{font-size:12.5px;color:var(--d4);margin-left:6px;font-weight:600}
+  .hours{font-size:12px;color:var(--ink-3);margin-top:2px}
+  .desc{font-size:13.5px;color:var(--ink-2);margin:10px 0 0;flex:1}
+  .tip{
+    margin-top:10px;font-size:12.5px;color:var(--ink-2);
+    background:#f4f1ea;border-left:3px solid #d9d2c4;border-radius:0 8px 8px 0;padding:7px 10px;
+  }
+  .card-foot{
+    margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+  }
+  .dist{font-size:12px;color:var(--ink-3)}
+  .btn-taxi{
+    display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-size:12.5px;
+    color:var(--accent);border:1px solid #e8d6cf;background:#fdf7f4;
+    padding:6px 11px;border-radius:9px;transition:.16s;white-space:nowrap;
+  }
+  .btn-taxi:hover{background:#f8eae3}
+  .walk{font-size:12px;color:var(--ink-3)}
+
+  /* ---------- 提示 ---------- */
+  .notes{margin-top:34px;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+  .note{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow)}
+  .note h3{margin:0 0 8px;font-size:14.5px}
+  .note ul{margin:0;padding-left:18px;font-size:13.5px;color:var(--ink-2)}
+  .note li{margin:5px 0}
+  footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-3)}
+
+  @media (max-width:640px){
+    header{padding-top:36px}
+    .cards{grid-template-columns:1fr}
+    #map{height:56vh;border-radius:14px}
+    .day-top{padding:14px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">Hangzhou · New Year</div>
+    <h1>杭州元旦 5 日<br>西湖到运河的慢行程</h1>
+    <p class="sub">1 月 1 日 — 1 月 5 日，五天走完西湖、灵隐、西溪良渚与运河。每天 3–8 个点，同日点与点之间给你一键打车。</p>
+    <div class="meta">
+      <span class="chip"><b>5</b> 天</span>
+      <span class="chip"><b>19</b> 个地点</span>
+      <span class="chip">西湖 · 灵隐 · 西溪 · 良渚 · 运河</span>
+      <span class="chip">高德地图 App 可一键打开</span>
+    </div>
+
+    <div class="weather">
+      <div class="icon">❄️</div>
+      <div>
+        <h3>天气：1 月杭州，湿冷为主</h3>
+        <p>常年同期白天 <b>2–8℃</b>，阴雨天多、体感偏冷，偶有雨夹雪；西湖边风大，比市区低 1–2℃。
+          <span class="warn">这不是预报</span>——高德天气只能给未来 4 天，元旦的准确天气请在出发前 3 天再查一次，按「下雨」准备一套室内替换（茶叶博物馆、良渚、宋城都在室内）。</p>
+      </div>
+    </div>
+  </header>
+
+  <section class="map-block">
+    <div class="map-head">
+      <h2>路线地图</h2>
+      <span>点击地图标记或下方卡片；地图为示意连线，实际以导航为准</span>
+    </div>
+    <div id="map"></div>
+  </section>
+
+  <div class="tabs" id="tabs"></div>
+  <div id="panels"></div>
+
+  <section class="notes">
+    <div class="note">
+      <h3>打车与交通</h3>
+      <ul>
+        <li>同日景点间按「打车前往下一站」即可，链接会直接唤起高德 App 叫车。</li>
+        <li>西湖环湖这一段（断桥—白堤—孤山—曲院风荷—苏堤）步行更顺，距离都在 1 公里上下。</li>
+        <li>元旦期间西湖景区常有临时交通管控，车可能只能停在外围，预留 10–15 分钟步行。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>元旦人流</h3>
+      <ul>
+        <li>断桥、灵隐寺、雷峰塔是全年最挤的几天，尽量 8:00 前到。</li>
+        <li>灵隐寺通常需先购飞来峰景区票，再购寺内香花券，以现场为准。</li>
+        <li>餐厅提前一天订位，尤其是 1 月 1 日晚上的河坊街。</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h3>冬季提醒</h3>
+      <ul>
+        <li>九溪、云栖一带溪边湿滑，穿防滑鞋。</li>
+        <li>茶叶博物馆周二闭馆；城市阳台周一关闭——本行程已避开。</li>
+        <li>良渚园区很大，建议买观光车；16:00 停止入园。</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    地图：Leaflet + 高德瓦片（GCJ-02）。景点信息与开放时间来自高德 POI，出行前请再核对一次官方公告。
+  </footer>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
+<script>
+/* ============ 数据 ============ */
+// 每天一个颜色，地图连线与卡片编号共用
+const COLOR = ['#1f2430', '#c0603f', '#3d8b7d', '#7a5ea8', '#b8891f', '#3f6f9e'];
+
+const DAYS = [
+  {
+    date: '01-01', week: '周五', title: '西湖环湖',
+    color: COLOR[1],
+    // 这串是高德「个人地图」令牌，点开即在 App 里看到当天全部点位
+    mapUri: 'amapuri://workInAmap/createWithToken?polymericId=mcp_ace529305dba4b508ea4ccc269c19ee1&from=MCP',
+    points: [
+      { name:'断桥残雪', lon:120.151347, lat:30.258151, rate:'4.9', hours:'全天开放', stay:'30 分钟',
+        img:'https://store.is.autonavi.com/showpic/478ddbbf592df9e88466a3e10c5d6b70',
+        desc:'西湖十景之一。桥面朝阳一侧雪先化，远看像断了一截，名字由此而来。',
+        tip:'元旦人多，7:30 前到能拍到空桥。' },
+      { name:'白堤', lon:120.149189, lat:30.255701, rate:'4.7', hours:'全天开放', stay:'40 分钟',
+        img:'https://store.is.autonavi.com/showpic/f3fbc2aeaba1df9085cb07562e5cc8c0',
+        desc:'东起断桥、西接孤山，约 1 公里。冬天的堤面开阔，湖对岸的宝石山看得很清楚。',
+        tip:'从断桥步行过来即可，不用打车。' },
+      { name:'西泠印社', lon:120.139948, lat:30.250279, rate:'4.7', hours:'08:30–16:30', stay:'60 分钟',
+        img:'https://store.is.autonavi.com/showpic/8540f75ae97a26fa864c9c3f8bd2d881',
+        desc:'孤山南麓的百年印学社团，摩崖题刻、石塔与园林叠在一起，冬天格外清净。',
+        tip:'下午 16:30 关门，别排在当天最后。' },
+      { name:'曲院风荷', lon:120.133333, lat:30.249287, rate:'4.8', hours:'全天开放', stay:'30 分钟',
+        img:'https://store.is.autonavi.com/showpic/93e5dfc496dbaf4e4982b83aaf75c3c2',
+        desc:'以夏日荷花出名，冬天剩下残荷与水面倒影，是另一种安静。',
+        tip:'从这里开始往南走苏堤。' },
+      { name:'苏堤春晓', lon:120.13796, lat:30.24388, rate:'4.7', hours:'全天开放', stay:'60 分钟',
+        img:'https://store.is.autonavi.com/showpic/866654ed2f61e2bd67457c0f179baf04',
+        desc:'全长约 2.8 公里的长堤，冬天柳枝疏朗，两侧都是水面，走起来很舒服。',
+        tip:'走中段即可，不必走完全程。' },
+      { name:'花港观鱼', lon:120.139095, lat:30.230233, rate:'4.8', hours:'全天开放', stay:'40 分钟',
+        img:'https://store.is.autonavi.com/showpic/36081114b697fba22f47ac146f8fa948',
+        desc:'红鱼池、牡丹园与大草坪，园子不大，适合走累后歇脚。',
+        tip:'南门出去就是雷峰塔方向。' },
+      { name:'雷峰塔', lon:120.148849, lat:30.230934, rate:'4.8', hours:'冬季 08:00–17:30（17:00 停止入园）', stay:'60 分钟',
+        img:'https://store.is.autonavi.com/showpic/58fbc3bf5460862ef2056ae1aa053754',
+        desc:'登塔俯瞰整个西湖，是把前面走过的白堤、苏堤一次看全的地方。',
+        tip:'冬季 17:00 停止入园，16:00 左右上去光线最好。' },
+      { name:'河坊街', lon:120.169895, lat:30.240584, rate:'4.7', hours:'全天开放（店铺约 10:00–22:00）', stay:'90 分钟',
+        img:'https://store.is.autonavi.com/showpic/fbcad6ebec8f902b0000006068412509?type=pic',
+        desc:'清河坊历史街区，老字号、小吃和手作店集中，适合安排晚饭。',
+        tip:'元旦晚间人极多，餐厅提前订位。' }
+    ]
+  },
+  {
+    date: '01-02', week: '周六', title: '灵隐 · 茶村 · 九溪',
+    color: COLOR[2],
+    mapUri: 'amapuri://workInAmap/createWithToken?polymericId=mcp_3c8d48074f424ce79b6fc35fa168b6cf&from=MCP',
+    points: [
+      { name:'灵隐寺', lon:120.101406, lat:30.240826, rate:'4.8', hours:'07:30–18:00', stay:'90 分钟',
+        img:'https://store.is.autonavi.com/showpic/4aa0a6a1b6ee72c9833441f363cbb43a',
+        desc:'江南著名古刹，殿宇沿山势层层向上，冬日上午香火与雾气混在一起。',
+        tip:'7:30 开门就进，9 点后人流明显上来。' },
+      { name:'飞来峰', lon:120.101101, lat:30.239119, rate:'4.7', hours:'07:30–17:30（17:00 停止入园）', stay:'60 分钟',
+        img:'https://store.is.autonavi.com/showpic/439cd2ebb79899f4b2cc53e60e061515',
+        desc:'五代至元代的石窟造像散布在溪谷岩壁上，与灵隐寺同属一个景区。',
+        tip:'通常需先买飞来峰景区票，再买灵隐寺香花券。' },
+      { name:'梅家坞茶文化村', lon:120.087925, lat:30.203525, rate:'4.6', hours:'全天开放（茶农营业约 09:00–20:00）', stay:'120 分钟',
+        img:'https://store.is.autonavi.com/showpic/9121c8d541bfda940000003080294449?type=pic',
+        desc:'西湖龙井的核心产区，沿溪一条街都是茶农与农家菜，冬天茶园安静。',
+        tip:'午饭在这里吃，点土鸡煲和冬笋。' },
+      { name:'九溪烟树', lon:120.11335, lat:30.202395, rate:'4.7', hours:'全天开放', stay:'90 分钟',
+        img:'https://store.is.autonavi.com/showpic/a79a5a8c6a341147c3c47d6a9d53db84',
+        desc:'溪水在茶山之间穿行，冬天水声清冷、树叶落尽，是杭州少有的野趣。',
+        tip:'溪边石板湿滑，穿防滑鞋；16:30 前离开。' }
+    ]
+  },
+  {
+    date: '01-03', week: '周日', title: '西溪 · 良渚 · 运河',
+    color: COLOR[3],
+    mapUri: 'amapuri://workInAmap/createWithToken?polymericId=mcp_f38da4e23b1f447a8c74c146d1395629&from=MCP',
+    points: [
+      { name:'西溪国家湿地公园', lon:120.061159, lat:30.255079, rate:'4.8', hours:'冬季 08:00–17:30（船票售至 16:15）', stay:'180 分钟',
+        img:'https://store.is.autonavi.com/showpic/ee8ba4fd213aa0ee5605e41415921500',
+        desc:'摇橹船穿过芦苇荡，冬季候鸟最多，水面上常有白鹭。',
+        tip:'一定要坐船，步行看不到核心水道。' },
+      { name:'良渚古城遗址公园', lon:119.991005, lat:30.389549, rate:'4.7', hours:'09:00–17:00（16:00 停止入园）', stay:'120 分钟',
+        img:'https://store.is.autonavi.com/showpic/d5c20208e75724827538f6176dfab915',
+        desc:'五千年前的古城遗址，城墙、宫殿区与鹿苑都在园区里，视野开阔。',
+        tip:'园区很大，买观光车；13:30 前到，16:00 就进不去了。' },
+      { name:'拱宸桥', lon:120.139844, lat:30.318101, rate:'4.7', hours:'全天开放', stay:'90 分钟',
+        img:'https://store.is.autonavi.com/showpic/f362be243fd1063b0000008421588167?type=pic',
+        desc:'京杭大运河最南端的古桥，桥西历史街区保留着旧厂房与老巷子。',
+        tip:'天黑后亮灯最好看，晚饭可在桥西解决。' }
+    ]
+  },
+  {
+    date: '01-04', week: '周一', title: '龙井 · 茶博 · 宋城',
+    color: COLOR[4],
+    mapUri: 'amapuri://workInAmap/createWithToken?polymericId=mcp_17f5596e10784b338d74f4243b915b63&from=MCP',
+    points: [
+      { name:'龙井村', lon:120.101363, lat:30.219642, rate:'3.9', hours:'07:00–20:00', stay:'120 分钟',
+        img:'https://store.is.autonavi.com/showpic/d1d5035ff53ad1250000000597460899',
+        desc:'西湖龙井的原产地，冬天茶园没有采茶人，反而能安静地看山。',
+        tip:'村里喝茶先问价，明码标价的茶农更稳。' },
+      { name:'中国茶叶博物馆（双峰馆）', lon:120.120532, lat:30.232381, rate:'4.7', hours:'09:00–16:30，周二闭馆', stay:'90 分钟',
+        img:'https://store.is.autonavi.com/showpic/c8462abf1b3ac9494a1d0b57e87d4440',
+        desc:'系统讲茶史、茶器与制茶工艺，室内暖和，阴雨天的最佳替换项。',
+        tip:'元旦假期正常开放；若改到周二来会闭馆。' },
+      { name:'宋城', lon:120.098741, lat:30.169795, rate:'4.7', hours:'09:30–21:00', stay:'240 分钟',
+        img:'https://store.is.autonavi.com/showpic/6be59a70cda31670d57c425e7238debd',
+        desc:'宋文化主题公园，街市、演艺与夜间灯光连成一片，《宋城千古情》是常驻演出。',
+        tip:'演出场次以官方当天公告为准，建议提前买含演出的票。' }
+    ]
+  },
+  {
+    date: '01-05', week: '周二', title: '灵峰探梅 · 江景',
+    color: COLOR[5],
+    mapUri: 'amapuri://workInAmap/createWithToken?polymericId=mcp_688eeb0f332b4535a96d5e5f709295c3&from=MCP',
+    points: [
+      { name:'灵峰探梅', lon:120.113483, lat:30.258212, rate:'4.6', hours:'在杭州植物园内，以植物园开放时间为准', stay:'120 分钟',
+        img:'https://store.is.autonavi.com/showpic/74f43f025115050ae6207df32b66f8c4',
+        desc:'杭州最有名的赏梅地之一，元旦前后早梅陆续开放，梅林沿山坡展开。',
+        tip:'开花情况每年不同，出发前查一下植物园花讯。' },
+      { name:'城市阳台', lon:120.216803, lat:30.241827, rate:'4.8', hours:'周二至周日 09:00–16:00，周一关闭', stay:'90 分钟',
+        img:'https://aos-cdn-image.amap.com/sns/ugccomment/77e8227c-18cd-49d9-ae4d-2ca64457aa1b.jpg',
+        desc:'钱塘江边的观景平台，一侧是江面，一侧是钱江新城的城市天际线。',
+        tip:'16:00 关闭，13:30 前到；结束后直接去机场或高铁站都顺路。' }
+    ]
+  }
+];
+
+/* ============ 工具函数 ============ */
+const $ = (s) => document.querySelector(s);
+
+// 两点球面距离（公里），只用来在卡片上提示远近，不参与导航
+function km(a, b) {
+  const R = 6371, rad = (d) => d * Math.PI / 180;
+  const dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+  const h = Math.sin(dLat/2)**2 + Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// 高德打车唤端链接：起点终点都用当前段的两个点
+function taxiUri(a, b) {
+  const q = (v) => encodeURIComponent(v);
+  return 'amapuri://drive/takeTaxi?sourceApplication=amapplatform'
+    + '&slat=' + a.lat + '&slon=' + a.lon + '&sname=' + q(a.name)
+    + '&dlat=' + b.lat + '&dlon=' + b.lon + '&dname=' + q(b.name);
+}
+
+/* ============ 地图 ============ */
+const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([30.25, 120.13], 12);
+
+// 高德栅格瓦片：坐标系是 GCJ-02，与 POI 坐标一致，不需要额外纠偏
+L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+  subdomains: ['1','2','3','4'],
+  maxZoom: 18,
+  attribution: '&copy; 高德地图'
+}).addTo(map);
+
+const layer = L.layerGroup().addTo(map);
+
+function pin(n, color) {
+  return L.divIcon({
+    className: '',
+    html: '<div class="mk" style="background:' + color + '">' + n + '</div>',
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    popupAnchor: [0, -14]
+  });
+}
+
+let current = 0;
+
+function drawDay(idx) {
+  layer.clearLayers();
+  current = idx;
+
+  // 总览：五天的线一起画，颜色区分
+  const list = idx === 0 ? DAYS.map((d, i) => i + 1) : [idx];
+
+  list.forEach((di) => {
+    const d = DAYS[di - 1];
+    const latlngs = d.points.map((p) => [p.lat, p.lon]);
+
+    L.polyline(latlngs, {
+      color: d.color, weight: 3, opacity: 0.85,
+      dashArray: idx === 0 ? '6 6' : null
+    }).addTo(layer);
+
+    d.points.forEach((p, i) => {
+      L.marker([p.lat, p.lon], { icon: pin(i + 1, d.color) })
+        .addTo(layer)
+        .bindPopup('<b>' + d.date + ' · ' + p.name + '</b>' + (p.hours || ''));
+    });
+  });
+
+  // 视野：总览时看全城，单日时只看当天
+  const bounds = L.latLngBounds(list.flatMap((di) => DAYS[di - 1].points.map((p) => [p.lat, p.lon])));
+  map.fitBounds(bounds.pad(idx === 0 ? 0.12 : 0.18));
+}
+
+/* ============ 渲染 ============ */
+const tabs = $('#tabs');
+const panels = $('#panels');
+
+const TAB_LABEL = ['总览'].concat(DAYS.map(d => d.date.slice(0,2) + '/' + d.date.slice(3) + ' ' + d.week));
+
+TAB_LABEL.forEach((label, i) => {
+  const b = document.createElement('button');
+  b.className = 'tab' + (i === 1 ? ' on' : '');
+  b.dataset.day = i;
+  b.textContent = label;
+  b.onclick = () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('on'));
+    b.classList.add('on');
+    document.querySelectorAll('.day-panel').forEach(p => p.classList.remove('on'));
+    const panel = document.getElementById('day-' + i);
+    if (panel) panel.classList.add('on');
+    drawDay(i);
+    if (i > 0) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  tabs.appendChild(b);
+});
+
+// 总览面板：只放每天的一行摘要，点日期标签再进具体卡片
+const overview = document.createElement('div');
+overview.className = 'day-panel';
+overview.id = 'day-0';
+overview.innerHTML = DAYS.map((d, i) => `
+  <div class="day-top">
+    <div class="left">
+      <span class="day-dot" style="background:${d.color}"></span>
+      <div>
+        <h2>Day ${i+1} · ${d.title}</h2>
+        <div class="when">${d.date} ${d.week} · ${d.points.length} 个地点 · ${d.points.map(p => p.name).join(' → ')}</div>
+      </div>
+    </div>
+    <a class="btn-amap" href="${d.mapUri}">在高德地图打开 Day ${i+1}</a>
+  </div>
+`).join('');
+panels.appendChild(overview);
+
+DAYS.forEach((d, di) => {
+  const panel = document.createElement('div');
+  panel.className = 'day-panel' + (di === 0 ? ' on' : '');
+  panel.id = 'day-' + (di + 1);
+
+  const cards = d.points.map((p, i) => {
+    const next = d.points[i + 1];
+    let foot = '<span class="walk">今日终点</span>';
+    if (next) {
+      const dist = km(p, next);
+      const walkable = dist < 1.2;
+      foot = `<span class="dist">到下一站约 ${dist.toFixed(1)} km${walkable ? ' · 可步行' : ''}</span>
+              <a class="btn-taxi" href="${taxiUri(p, next)}">打车前往「${next.name}」</a>`;
+    }
+    return `
+      <article class="card" data-lat="${p.lat}" data-lng="${p.lon}">
+        <div class="thumb">
+          <img src="${p.img}" alt="${p.name}" loading="lazy"
+               onerror="this.parentNode.classList.add('broken')">
+          <div class="fallback" style="background:linear-gradient(135deg,${d.color},#2d3444)">${p.name}</div>
+          <div class="badge">${i + 1}</div>
+          <div class="stay">${p.stay}</div>
+        </div>
+        <div class="body">
+          <h3>${p.name}<span class="rate">★ ${p.rate}</span></h3>
+          <div class="hours">${p.hours}</div>
+          <p class="desc">${p.desc}</p>
+          <div class="tip">${p.tip}</div>
+          <div class="card-foot">${foot}</div>
+        </div>
+      </article>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <div class="day-top">
+      <div class="left">
+        <span class="day-dot" style="background:${d.color}"></span>
+        <div>
+          <h2>Day ${di+1} · ${d.title}</h2>
+          <div class="when">${d.date} ${d.week} · ${d.points.length} 个地点</div>
+        </div>
+      </div>
+      <a class="btn-amap" href="${d.mapUri}">在高德地图打开 Day ${di+1}</a>
+    </div>
+    <div class="cards">${cards}</div>`;
+
+  panels.appendChild(panel);
+
+  // 点卡片 = 地图定位到该点
+  panel.querySelectorAll('.card').forEach((card) => {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('a')) return;          // 打车链接不触发定位
+      const lat = +card.dataset.lat, lng = +card.dataset.lng;
+      map.flyTo([lat, lng], 15, { duration: 0.6 });
+    });
+  });
+});
+
+drawDay(1);
+</script>
+</body>
+</html>

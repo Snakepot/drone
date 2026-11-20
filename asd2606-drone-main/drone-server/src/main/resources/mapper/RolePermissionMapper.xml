@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.user.dao.RolePermissionDao">
+
+    <select id="selectPermissionIdsByRoleId" resultType="java.lang.Long">
+        SELECT permission_id
+        FROM role_permission
+        WHERE role_id = #{roleId}
+    </select>
+
+    <delete id="deleteByRoleId">
+        DELETE FROM role_permission WHERE role_id = #{roleId}
+    </delete>
+
+    <!-- 批量插入；调用方需保证 permissionIds 非空 -->
+    <insert id="insertBatch">
+        INSERT INTO role_permission (role_id, permission_id) VALUES
+        <foreach collection="permissionIds" item="permissionId" separator=",">
+            (#{roleId}, #{permissionId})
+        </foreach>
+    </insert>
+
+</mapper>

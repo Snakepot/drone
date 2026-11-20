@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".qoder/hooks/protect-sdd.sh",
+            "name": "protect-sdd",
+            "statusMessage": "检查受保护文件...",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".qoder/hooks/guard-git.sh",
+            "name": "guard-git",
+            "statusMessage": "检查危险 Git 命令...",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "sequential": true,
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".qoder/hooks/precommit_checks.py",
+            "if": "Bash(git commit:*)",
+            "name": "precommit-checks",
+            "statusMessage": "提交前检查：密钥 / 未使用 import...",
+            "timeout": 30
+          },
+          {
+            "type": "agent",
+            "prompt": "你是提交前的代码评审员，只读，不修改、不暂存任何文件。先读 AGENTS.md、docs/sdd/constitution.md、docs/sdd/java-standards.md、docs/sdd/frontend-standards.md 和 .qoder/skills/code-review/SKILL.md，然后运行 `git diff --cached` 审阅暂存改动。重点检查：安全（越权、密钥、注入）、SDD 合规、分层与契约、ThreadLocal/异步清理、测试覆盖；纯文档/配置改动不要挑格式。只把 BLOCKER / MAJOR 视为阻塞。返回 JSON：{\"ok\":true} 或 {\"ok\":false,\"reason\":\"具体问题 + 文件:行\"}。密钥扫描和未使用 import 已由独立脚本处理，不要重复检查。",
+            "tools": ["Bash", "Read", "Grep", "Glob"],
+            "if": "Bash(git commit:*)",
+            "name": "precommit-code-review",
+            "statusMessage": "提交前代码评审...",
+            "maxTurns": 12,
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

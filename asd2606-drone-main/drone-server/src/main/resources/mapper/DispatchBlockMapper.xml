@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.task.dao.DispatchBlockDao">
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `task_dispatch_block` (task_id, checked_at, reason, pilot_candidates, drone_candidates)
+        VALUES (#{taskId}, #{checkedAt}, #{reason}, #{pilotCandidates}, #{droneCandidates})
+    </insert>
+
+    <!-- 只取最近一条：调用方拿它判断「原因没变就不用再记」 -->
+    <select id="selectLatestByTaskId" resultType="cn.tedu.drone.task.dispatch.DispatchBlockPO">
+        SELECT id, task_id, checked_at, reason, pilot_candidates, drone_candidates
+        FROM `task_dispatch_block`
+        WHERE task_id = #{taskId}
+        ORDER BY checked_at DESC, id DESC
+        LIMIT 1
+    </select>
+
+</mapper>

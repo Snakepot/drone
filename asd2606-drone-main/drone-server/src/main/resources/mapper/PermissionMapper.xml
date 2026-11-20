@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.user.dao.PermissionDao">
+
+    <!--
+      用户 → 角色 → 权限 三级关联，一条 SQL 取出最终权限码。
+      只取启用角色（r.status = 1）：角色禁用后其权限自动失效，无需清理关联记录。
+    -->
+    <select id="selectCodesByUserId" resultType="java.lang.String">
+        SELECT DISTINCT p.code
+        FROM user_role ur
+        JOIN `role` r             ON r.id = ur.role_id AND r.status = 1
+        JOIN role_permission rp   ON rp.role_id = r.id
+        JOIN permission p         ON p.id = rp.permission_id
+        WHERE ur.user_id = #{userId}
+    </select>
+
+    <select id="selectAll" resultType="cn.tedu.drone.user.pojo.PermissionPO">
+        SELECT id, code, name, type, parent_id, sort, create_time
+        FROM `permission`
+        ORDER BY id
+    </select>
+
+</mapper>

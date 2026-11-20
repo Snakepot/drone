@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.task.dao.TaskEvidenceDao">
+
+    <!--
+      写入一条证据，撞唯一键就静默跳过。
+
+      为什么是 INSERT IGNORE 而不是普通 INSERT：
+      QoS 1 只保证「至少一次」，同一条消息被投递两次是常态而不是异常。
+      去重的依据必须是数据库的唯一索引 uk_evidence_dedup
+      (device_code, type, observed_at, seq)，因为只有数据库能提供
+      「判断 + 写入」的原子性 —— 应用层先查后插在并发下必然有窗口。
+
+      为什么带上 valid：列上有 DEFAULT 1，本来可以不写。
+      但证据的「有效性」是这套设计里的核心概念之一，显式写出来
+      比藏在建表语句里更容易被下一个读代码的人看见。
+
+      reported_at 明确传值而不是靠 DEFAULT CURRENT_TIMESTAMP：
+      那个默认值取的是 MySQL 服务器的时钟，而本项目连的是 mysqld（时区是 UTC），
+      和我们应用侧的 Asia/Shanghai 差 8 小时。传应用算好的时间，两边才一致。
+    -->
+    <insert id="insertIgnore">
+        INSERT IGNORE INTO task_evidence (task_id, device_code, type, source, attach_id,
+                                          payload, seq, observed_at, reported_at, valid)
+        VALUES (#{taskId}, #{deviceCode}, #{type}, #{source}, #{attachId},
+                #{payload}, #{seq}, #{observedAt}, #{reportedAt}, #{valid})
+    </insert>
+
+    <!--
+      某条任务的轨迹（地图上那条线）。
+
+      坐标藏在**报文原文**里（`payload` 存的是设备发来的原始 JSON），
+      所以要 JSON_EXTRACT 取出来 —— 和「最低电量」是同一个手法
+      （见 docs/任务收尾与执行报告.md 5.2）。
+
+      四个刻意的写法：
+
+      1. **JSON_VALID 放进 WHERE**：payload 是被截断过的（超 60000 字符会剪尾），
+         剪过的不再是合法 JSON，而 JSON_EXTRACT 遇到非法 JSON 会**直接报错**
+         （不是返回 NULL）—— 那会让整条轨迹查不出来
+      2. **JSON_TYPE 必须是数字**：设备偶尔会把坐标发成字符串（"116.39"）。
+         那种行 CAST 成数字会得到 NULL 并留下警告，不如在 WHERE 里明确排除 ——
+         **宁可少画一个点，不要在轨迹里插一个 NULL**
+      3. **只取 valid = 1**：被推翻的证据不参与
+      4. **排序用 observed_at 再 seq**：同一秒可能有多条，seq 是设备侧递增序号，
+         拿它做次级排序才能保证顺序稳定（否则同秒的点顺序随机，线会来回抖）
+
+      不返回 alt：现在画的是 2D 折线，用不上；将来做三维时再加。
+    -->
+    <select id="selectTrack" resultType="cn.tedu.drone.task.pojo.TaskTrackPoint">
+        SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.payload.lng')) AS DECIMAL(10, 6)) AS lng,
+               CAST(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.payload.lat')) AS DECIMAL(10, 6)) AS lat,
+               observed_at AS observedAt
+        FROM task_evidence
+        WHERE task_id = #{taskId}
+          AND valid = 1
+          AND JSON_VALID(payload)
+          AND JSON_TYPE(JSON_EXTRACT(payload, '$.payload.lng')) IN ('INTEGER', 'DOUBLE')
+          AND JSON_TYPE(JSON_EXTRACT(payload, '$.payload.lat')) IN ('INTEGER', 'DOUBLE')
+        ORDER BY observed_at, seq
+    </select>
+
+    <!--
+      某条任务的证据汇总（报告详情页「自动汇总」那一半的数据来源，
+      口径见 docs/任务收尾与执行报告.md 5.2 节）。
+
+      三处刻意的写法：
+
+      1. **只数 valid = 1**：被推翻的证据不算数（valid = 0 表示这条作废了），
+         但行还留着 —— 这是「只追加、用标记推翻」那套做法的必然结果。
+
+      2. **JSON_EXTRACT 外面套 CASE WHEN JSON_VALID**：
+         payload 是被截断过的（超 60000 字符会剪掉尾部，见
+         TelemetryIngestServiceImpl），剪过的部分不再是合法 JSON，
+         而 JSON_EXTRACT 遇到非法 JSON 会**直接报错**（不是返回 NULL）——
+         那会让整个报告详情页打不开。CASE 是短路求值的，
+         所以非法 JSON 的行只会得到 NULL，不会把查询带崩。
+
+      3. **CAST 成 DECIMAL 再比**：JSON_EXTRACT 取出来的是 JSON 类型，
+         直接 MIN/MAX 的排序行为和数字不一定一样；转成数字才可靠。
+
+      取不到时返回 NULL 是**对的**（设备没报过这个字段），
+      不要兜底成 0 —— 「没数据」和「电量 0」是两件事。
+    -->
+    <select id="selectSummary" resultType="cn.tedu.drone.task.pojo.TaskEvidenceSummary">
+        SELECT COUNT(*)                                                          AS telemetry_count,
+               MIN(observed_at)                                                  AS first_observed_at,
+               MAX(observed_at)                                                  AS last_observed_at,
+               MIN(CASE WHEN JSON_VALID(payload)
+                        THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.payload.battery')) AS DECIMAL(10, 2))
+                   END)                                                          AS min_battery,
+               MAX(CASE WHEN JSON_VALID(payload)
+                        THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.payload.alt')) AS DECIMAL(10, 2))
+                   END)                                                          AS max_alt
+        FROM task_evidence
+        WHERE task_id = #{taskId}
+          AND valid = 1
+    </select>
+
+
+    <!-- ================================================================
+         监控看板（第五步）：多条任务各自的当前位置与最近航迹
+         ================================================================ -->
+
+    <!--
+      可复用的「带坐标的证据」条件。
+      **这份条件必须在两处一模一样** —— 一处少一个条件，就会出现
+      「看板上有位置、轨迹里没有」这类对不上的情况。
+
+      JSON_TYPE(...) 判类型而不是直接 CAST：设备发过 lng 是字符串的报文
+      （"116.39"），CAST 会把 'abc' 之类变成 0 或 NULL，然后一个 (0,0) 的点
+      就被画到几内亚湾去了。JSON_VALID 也得有：payload 会被截断到 60000 字符，
+      截断之后就不是合法 JSON，JSON_EXTRACT 会直接报错。
+    -->
+    <sql id="evidenceCoordinateCondition">
+        valid = 1
+        AND JSON_VALID(payload)
+        AND JSON_TYPE(JSON_EXTRACT(payload, '$.payload.lng')) IN ('INTEGER', 'DOUBLE')
+        AND JSON_TYPE(JSON_EXTRACT(payload, '$.payload.lat')) IN ('INTEGER', 'DOUBLE')
+    </sql>
+
+    <!-- 每条任务取「最新一条带坐标的遥测」：ROW_NUMBER 分组编号，取 1 -->
+    <select id="selectLatestPositions" resultType="cn.tedu.drone.task.pojo.TaskLivePointVO">
+        SELECT p.task_id AS taskId, p.lng, p.lat, p.observed_at AS observedAt
+        FROM (
+            SELECT e.task_id,
+                   CAST(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.payload.lng')) AS DECIMAL(10, 6)) AS lng,
+                   CAST(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.payload.lat')) AS DECIMAL(10, 6)) AS lat,
+                   e.observed_at,
+                   ROW_NUMBER() OVER (PARTITION BY e.task_id ORDER BY e.id DESC) AS rn
+            FROM task_evidence e
+            WHERE e.task_id IN
+            <foreach collection="taskIds" item="taskId" open="(" separator="," close=")">
+                #{taskId}
+            </foreach>
+              AND <include refid="evidenceCoordinateCondition"/>
+        ) p
+        WHERE p.rn = 1
+    </select>
+
+    <!--
+      每条任务取最近 N 个原始点（供调用方抽稀后画一小段航迹）。
+      ORDER BY task_id, rn DESC：rn 是从新到旧编的，倒序输出正好是**时间升序** ——
+      画折线要的就是这个顺序（顺序反了线会来回折）。
+    -->
+    <select id="selectRecentTrails" resultType="cn.tedu.drone.task.pojo.TaskLivePointVO">
+        SELECT t.task_id AS taskId, t.lng, t.lat, t.observed_at AS observedAt
+        FROM (
+            SELECT e.task_id,
+                   CAST(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.payload.lng')) AS DECIMAL(10, 6)) AS lng,
+                   CAST(JSON_UNQUOTE(JSON_EXTRACT(e.payload, '$.payload.lat')) AS DECIMAL(10, 6)) AS lat,
+                   e.observed_at,
+                   ROW_NUMBER() OVER (PARTITION BY e.task_id ORDER BY e.id DESC) AS rn
+            FROM task_evidence e
+            WHERE e.task_id IN
+            <foreach collection="taskIds" item="taskId" open="(" separator="," close=")">
+                #{taskId}
+            </foreach>
+              AND <include refid="evidenceCoordinateCondition"/>
+        ) t
+        WHERE t.rn &lt;= #{perTaskLimit}
+        ORDER BY t.task_id, t.rn DESC
+    </select>
+
+
+    <!-- 大屏：某个时刻之后的证据条数（设备到底有没有在发数据） -->
+    <select id="countSince" resultType="long">
+        SELECT COUNT(*)
+        FROM task_evidence e
+        WHERE e.observed_at &gt;= #{from}
+    </select>
+
+    <!-- 大屏：最近一段时间内有数据的设备数（在线率的口径，见 DAO 的说明） -->
+    <select id="countActiveDevicesSince" resultType="long">
+        SELECT COUNT(DISTINCT e.device_code)
+        FROM task_evidence e
+        WHERE e.observed_at &gt;= #{from}
+    </select>
+
+</mapper>

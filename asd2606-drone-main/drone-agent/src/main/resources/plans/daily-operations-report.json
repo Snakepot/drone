@@ -1,0 +1,69 @@
+{
+  "name": "daily-operations-report",
+  "origin": "BUILTIN",
+  "version": 1,
+  "goal": "生成今日运营日报（任务 / 人员 / 设备 / 告警 / 风险建议）",
+  "triggers": ["日报", "运营日报", "今天运营情况"],
+  "steps": [
+    {
+      "id": "s1",
+      "title": "总览",
+      "kind": "TOOL",
+      "tool": "drone__dashboard_summary",
+      "args": {},
+      "dependsOn": []
+    },
+    {
+      "id": "s2",
+      "title": "今日任务",
+      "kind": "TOOL",
+      "tool": "drone__analytics_overview",
+      "args": {
+        "from": "${today.start}",
+        "to": "${today.end}"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "s3",
+      "title": "派发积压",
+      "kind": "TOOL",
+      "tool": "drone__analytics_dispatch_block",
+      "args": {
+        "from": "${today.start}",
+        "to": "${today.end}"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "s4",
+      "title": "在执行清单",
+      "kind": "TOOL",
+      "tool": "drone__task_list",
+      "args": {
+        "status": "executing",
+        "pageSize": 50
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "s5",
+      "title": "待处理告警",
+      "kind": "TOOL",
+      "tool": "drone__alert_list",
+      "args": {
+        "status": "pending",
+        "pageSize": 30
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "s6",
+      "title": "生成日报 HTML",
+      "kind": "SYNTHESIZE",
+      "skill": "daily-operations-report",
+      "dependsOn": ["s1", "s2", "s3", "s4", "s5"],
+      "prompt": "严格按流程说明与 HTML 模板生成日报：先写 2-3 行摘要，再输出 ```html 围栏的完整单文件 HTML。不得编造步骤结果里没有的数据；某一步失败或缺失要如实写明。"
+    }
+  ]
+}

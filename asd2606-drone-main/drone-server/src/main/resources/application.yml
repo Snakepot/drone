@@ -1,0 +1,234 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: drone-server
+  # 文件上传的全局上限。**不配不行**：Spring Boot 的默认值是单文件 1MB，
+  # 而手机原图通常 3~8MB —— 会在进 Controller 之前就被挡下，
+  # 报一个和业务毫无关系的错（MaxUploadSizeExceededException）。
+  # 这里按**最大的那一类**（视频）设，细分的「照片 20MB / 视频 500MB / 日志 200MB」
+  # 在业务代码里判（AttachmentType），因为 multipart 配置是全局的、分不了类型。
+  servlet:
+    multipart:
+      max-file-size: 500MB
+      max-request-size: 520MB
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/drone?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: cn.tedu.drone
+  configuration:
+    map-underscore-to-camel-case: true
+
+drone:
+  # 服务间内部接口（/internal/**）的共享密钥。
+  # 目前只有 drone-agent 用：它拿这个密钥换用户的角色与权限。
+  # 生产环境务必通过环境变量 DRONE_INTERNAL_TOKEN 注入；
+  # 且 drone-agent 的 agent.internal.token 必须与这里一致。
+  internal:
+    token: ${DRONE_INTERNAL_TOKEN:drone-dev-internal-token-change-me}
+  # 数字大屏（见 docs/数字大屏方案.md 3.6）。改完重启生效；
+  # 将来做配置页时，这里变成「表里没有就用这些默认值」，前端读的接口不变
+  screen:
+    carousel-enabled: true                   # 是否自动轮播
+    carousel-pages: [overview, map, alerts]  # 轮播哪几屏、什么顺序
+    carousel-seconds: 15                     # 每屏停留秒数
+    carousel-pin-on-critical: false          # 有未处理 critical 时停在告警屏
+    carousel-pin-max-seconds: 300            # 就算钉住，最长也停这么久
+    refresh-map-seconds: 3                   # 地图上的位置
+    refresh-live-seconds: 10                 # 告警流、执行中任务数
+    refresh-stat-seconds: 60                 # 各类总数、分布图
+    pause-when-hidden: true                  # 页面不可见时停刷
+    # 缓存：同一个统计在这么多秒内只真算一次（挡住「多块屏同时挂着」的重复请求）。
+    # ⚠️ 必须 ≤ 对应的刷新间隔，否则大屏会「一直在刷却永远看到同一个值」
+    summary-cache-seconds: 10                # 总览（统计档 60 秒）
+    recent-cache-seconds: 5                  # 告警流（动态档 10 秒）
+    # 缓存的日志（TtlCache 自己记）：未命中记 INFO（含「业务真算一遍花了多少」）、
+    # 过期重算与未命中分开记、每 60 秒一条小结（命中率 + 累计省下的时间）。
+    # 本项目日志整体是 debug，所以每一次命中也会看到；生产切回 info 时只剩未命中与小结。
+    # 只想看这一块时，单独给它开一层：
+    #   logging.level.cn.tedu.drone.dashboard.cache: debug
+    night-pause-enabled: false               # 夜间停刷（默认不停，2026-09-29 拍板）
+    night-pause-from: "02:00"
+    night-pause-to: "06:00"
+  analytics:
+    # 设备利用率的「每日可飞小时」：可飞时长 = 在役天数 × 这个值（见 docs/业务分析方案.md 2.3）。
+    # ⚠️ 这是**近似**：维护/充电的日子也算进了分母，所以算出来的利用率偏低（保守）。
+    # 要做准就得有设备状态变更历史，而那件事拍板不做（8.2 第 7 条）。
+    # 做成配置是因为「一天能飞几小时」随作业类型变（巡检班次 4~6 小时 vs 全天待命 8）
+    flyable-hours-per-day: 8
+    # 预聚合日表（见 docs/业务分析方案.md 4.3 ③）：明细表上「按天看一年」要 0.58 s、读 197 万行，
+    # 走这张汇总表只要 0.04 s（4.5 实测）。
+    stat-daily:
+      enabled: true
+      # 每 30 分钟检查一次「昨天及以前有没有该算而没算的天」。
+      # 不 cron 定凌晨：算一天只要几十毫秒，用轮询还能顺手把停机漏掉的那几天补回来
+      interval-ms: 1800000
+      # 往回看多少天找空洞（停机、漏跑留下的）
+      lookback-days: 30
+      # 口径版本。**口径改了要 +1，并把历史整段重算**（rebuildRange）——
+      # 否则同一张表里混着新旧两套口径的数据，趋势图上会突然断层
+      caliber-version: 1
+    # 点位覆盖率（第四步）：打卡偏差不超过这个半径才算「到过」。
+    # 手机定位误差通常十几米，100 米足够宽松；调小会更严格（更多点算「没到」）
+    coverage:
+      radius-meters: 100
+  jwt:
+    # 生产环境请通过环境变量 JWT_SECRET 注入，不要使用此默认值
+    secret: ${JWT_SECRET:drone-dev-secret-key-please-change-in-production-2026}
+    expire-hours: 2
+    # 大屏账号（screen 只读角色）的 Token 有效期：365 天。
+    # 大屏挂在值班室没人会去重新登录，用 2 小时的话第二天早上看到的是一块停在登录页的屏。
+    # 要收紧就调小（如 720 = 30 天）；**有效期只由服务端按角色决定，前端传不了**
+    screen-expire-hours: ${JWT_SCREEN_EXPIRE_HOURS:8760}
+    issuer: drone-server
+  task:
+    # 派发超时自动释放：兜住「派了任务但飞手一直没执行」导致的资源永久占用
+    # 设计与取舍见 docs/任务业务设计.md 的「资源占用与释放」一章
+    auto-release:
+      enabled: true
+      # 计划结束时间过了多久还没开工，才释放。不能一过点就释放 —— 延后开工是常事
+      grace-minutes: 120
+      # 扫描间隔，单位毫秒，默认 10 分钟
+      interval-ms: 600000
+    # 待派发归因：定期给 status=pending 的任务记一条「当时为什么派不出去」
+    # （见 docs/业务分析方案.md 2.7）。**必须一直在跑** ——
+    # 它记的是当时的资源池，事后补不回来，停一天就缺一天的数据。
+    dispatch-block:
+      enabled: true
+      # 采样间隔：这是按天/周看的趋势数据，10 分钟的分辨率绰绰有余；
+      # 一天只派一次活的团队可以调大
+      interval-ms: 600000
+      # 同一条任务、同一个原因，最短隔多久再记一条。
+      # 原因**变了**会立刻记 —— 那正是想看到的信息（从「缺设备」变成「没人派」）
+      repeat-minutes: 60
+  upload:
+    # 附件（现场照片、飞行日志）在本地磁盘上的根目录。
+    # 目录结构是 {taskNo}/{yyyyMMdd}/{uuid}.{ext}，见 LocalStorageService。
+    #
+    # 为什么写成配置而不是常量：容器化部署时这个目录要挂卷，
+    # 「挂到哪」是运维的事，不该写死在代码里。
+    # 配成相对路径时是相对**进程的工作目录**（IDE 里就是项目根）。
+    root: ${DRONE_UPLOAD_ROOT:./data/upload}
+  mqtt:
+    # 设备数据接入总开关。
+    # 单元测试与不关心设备的本地开发可以关掉：没有它，每个测试都去连本地 broker，
+    # broker 没起就会刷一堆连接失败日志，噪音盖过真正要看的测试结果。
+    enabled: ${MQTT_ENABLED:true}
+    # broker 地址。tcp:// 是明文 MQTT（1883），ssl:// 是 TLS（8883）。
+    # 用环境变量覆盖，是为了让「本地跑」和「部署到服务器」共用一份代码。
+    broker-url: ${MQTT_BROKER_URL:tcp://localhost:1883}
+    # 客户端 ID 的「前缀」。MQTT 规定 clientId 全局唯一，
+    # 同一个 clientId 后连上的会把先连上的顶掉（broker 认为那是重连）。
+    # 所以代码会在后面拼一段随机后缀，保证一个进程一个真 ID ——
+    # 多人本地开发、或多实例部署时，不会互相踢下线。这一条是新手最容易踩的坑。
+    client-id: drone-server
+    username: ${MQTT_USERNAME:}
+    password: ${MQTT_PASSWORD:}
+    # 要订阅的 Topic 清单。
+    # `+` 是单层通配（一层就是两个斜杠之间的一段），`#` 是多层通配（只能放末尾）。
+    # 为什么遥测用 QoS 0：位置/电压这种数据是「下一帧马上就来」的，
+    # 丢一帧无所谓，硬要重传反而让过期数据挤占带宽。
+    # 事件与状态变化用 QoS 1：至少送到一次，比重复更怕丢 ——
+    # 重复我们有幂等（去重键）兜底，丢了一条「起飞」事件就再也补不回来了。
+    topics:
+      - topic: drone/+/telemetry
+        qos: 0
+      - topic: drone/+/event/+
+        qos: 1
+      - topic: drone/+/status
+        qos: 1
+    # 回调线程与业务线程之间的有界队列容量。
+    # Paho 的回调跑在它自己的网络线程上，如果在那里直接写库，
+    # 一旦数据库变慢，broker 就会被拖住、心跳超时、连接被断。
+    # 所以回调只负责「入队」，另有专门的消费线程慢悠悠写库。
+    # 队列满了就丢并打警告：宁可丢设备数据，不能把后端拖垮（背压保护）。
+    queue-capacity: 10000
+    # 消费线程数。写库是 IO 型活儿，2 个够用；
+    # 调大之前先确认瓶颈真在消费端，否则只是多几个线程一起等数据库。
+    worker-threads: 2
+    # 证据「新鲜度」阈值，单位秒。
+    # 飞手点了「开始执行」后 evidence_state 是 declared（只有声明没有证据）；
+    # 超过这个时间还没收到该设备的任何遥测，就把证据标成 stale（声明了但拿不到旁证）。
+    # 注意：这只影响 evidence_state，绝不改任务状态 —— 详见 docs/任务业务设计.md 第十章。
+    evidence-stale-seconds: 120
+    # 上面那个阈值的扫描间隔，单位毫秒，默认 1 分钟。
+    # 比任务释放的扫描密得多：阈值本身才 120 秒，扫得比它慢就失去提示的意义了。
+    evidence-stale-scan-ms: 60000
+  alert:
+    # 告警识别总开关。关掉后遥测仍会归档成证据，只是不再产生告警。
+    # 设计见 docs/告警体系设计.md
+    enabled: true
+    # 阈值。键就是告警编码（取值见 docs/告警体系设计.md 第二章），
+    # 所以「配置里看到的名字」和「清单里、代码里的名字」是同一套，不用在脑子里翻译。
+    # 单位：bat.* 是百分比与摄氏度，gps/signal 是等级，alt/speed/route 是米与米每秒，
+    # storage 是 GB。这里给的是默认建议值，不是标准答案 —— 平原和高原不一样。
+    threshold:
+      bat.low: 30
+      bat.critical: 15
+      bat.temp.high: 55
+      bat.temp.critical: 65
+      gps.weak: 2
+      rc.signal.weak: 2
+      alt.over: 120
+      alt.low: 5
+      speed.over: 15
+      storage.low: 1
+      # 本轮未实现（要看计划航线与历史位置，见设计文档 5.1 的「要看上下文」），
+      # 先把它需要的阈值放在这里，实现时直接可用
+      route.deviation: 30
+    # 「需要飞手在现场动手」的告警 → 给他的动作提示。
+    # 出现在这里的编码，落库时 pilot_action_required 会置 1、action_hint 存这句话。
+    # 注意：这只是**显示成待办**，飞手改不了告警状态 ——
+    # 处置责任和销账是两件事，见设计文档第十二章。
+    #
+    # 判断标准是「现场只有飞手能立刻做这件事」，不是「这条告警严不严重」：
+    # 飞机在天上出事，坐在办公室的管理员再着急也帮不上忙。所以这里既有 critical
+    # （电机异常），也有 warning（返航）。
+    # 人工上报类（man.*）还没做，等做飞手端上报时再加。
+    pilot-action:
+      bat.critical: 立即返航并就近降落
+      bat.temp.critical: 立即降落或悬停降温，落地后检查电池
+      gps.lost: 切换姿态模式并手动返航
+      motor.fault: 立即降落，落地后停飞检查
+      # 设备自己判定的三类事件：已经发生或正在发生，需要现场的人确认
+      evt.rth: 确认返航原因，必要时人工接管
+      evt.mission.interrupt: 立即接管并确认飞机状态
+      evt.emergency.stop: 立即确认现场安全，落地后停飞检查
+      # 空间类（禁飞区）：判据在我们这边，而且**只有飞手能立刻处置** ——
+      # 管理侧看到告警时人不在现场，能动手的只有他
+      zone.breach: 立即飞离该区域并就近降落，落地后上报情况
+      zone.alt.over: 立即下降到限高以下，或飞离该限高区
+      # 人工上报类：这几条**本来就是飞手报的**，所以「提示」的意义不是叫他去做，
+      # 而是把「接下来该干什么」固定在记录里 —— 管理侧销账时要看的就是这一条，
+      # 也让飞手在清单里看到「我报的这件事，标准动作是什么」
+      man.onsite.issue: 暂停作业并排除现场障碍，必要时换起降点
+      man.device.damage: 停止作业，保护现场并拍照留证
+      man.weather: 暂停作业，等天气满足条件后再起飞
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+knife4j:
+  enable: true
+
+logging:
+  # traceId 由 TraceFilter 从 X-Trace-Id 写入 MDC；没有该头时输出空。
+  # 这样 agent / MCP / server 三边的同一请求可以用同一个 id grep 出来（REQ-AGENT-0026）。
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] [%thread] %logger{36} - %msg%n"
+  level:
+    # 本项目日志调成 debug，开发时能看到完整的登录与 Token 校验流程。
+    # 生产环境建议改回 info，避免日志量过大。
+    cn.tedu.drone: debug

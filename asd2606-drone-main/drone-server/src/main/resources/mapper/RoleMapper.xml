@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.tedu.drone.user.dao.RoleDao">
+
+    <sql id="roleColumns">
+        id, code, name, description, status, create_time, update_time
+    </sql>
+
+    <!-- 注意：role 是 MySQL 8.0 的关键字，必须加反引号 -->
+    <select id="selectCodesByUserId" resultType="java.lang.String">
+        SELECT DISTINCT r.code
+        FROM user_role ur
+        JOIN `role` r ON r.id = ur.role_id AND r.status = 1
+        WHERE ur.user_id = #{userId}
+    </select>
+
+    <select id="selectAll" resultType="cn.tedu.drone.user.pojo.RolePO">
+        SELECT <include refid="roleColumns"/>
+        FROM `role`
+        ORDER BY id
+    </select>
+
+    <select id="selectById" resultType="cn.tedu.drone.user.pojo.RolePO">
+        SELECT <include refid="roleColumns"/>
+        FROM `role`
+        WHERE id = #{id}
+    </select>
+
+    <select id="selectByCode" resultType="cn.tedu.drone.user.pojo.RolePO">
+        SELECT <include refid="roleColumns"/>
+        FROM `role`
+        WHERE code = #{code}
+        LIMIT 1
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `role` (code, name, description, status)
+        VALUES (#{code}, #{name}, #{description}, #{status})
+    </insert>
+
+    <!--
+      刻意不更新 code：角色编码会被代码里引用（如判断 hasRole('admin')），
+      改了它可能让既有逻辑失效。要换语义就新建角色、把用户迁过去。
+    -->
+    <update id="update">
+        UPDATE `role`
+        SET name        = #{name},
+            description = #{description},
+            status      = #{status}
+        WHERE id = #{id}
+    </update>
+
+</mapper>

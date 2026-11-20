@@ -1,0 +1,542 @@
+/**
+ * 控制台设计系统
+ *
+ * 从原型 console.html 抽取而来，与登录页共用同一套配色语汇。
+ * 这里放的是跨页面复用的基础类，布局相关的样式在 layouts/AdminLayout.vue 里。
+ *
+ * 主题切换：深色为默认值（:root），浅色通过 <html data-theme="light"> 覆盖。
+ * 组件样式一律引用变量，不写死颜色，否则切到浅色会花。
+ */
+
+:root {
+  /* ---------- 强调色 ---------- */
+  --cyan: #22d3ee;
+  --blue: #3b82f6;
+  --violet: #8b5cf6;
+  --green: #34d399;
+  --amber: #fbbf24;
+  --red: #f87171;
+
+  /* ---------- 文字 ---------- */
+  --text: #e6f1ff;
+  --text-2: rgba(230, 241, 255, 0.72);
+  --muted: rgba(230, 241, 255, 0.48);
+  --code-fg: #a5f3fc;
+  --link: rgba(140, 200, 255, 0.85);
+  --danger-link: rgba(248, 113, 113, 0.85);
+
+  /* ---------- 分隔线 ---------- */
+  --line: rgba(120, 190, 255, 0.14);
+  --line-strong: rgba(120, 190, 255, 0.26);
+
+  /* ---------- 面板与背景 ---------- */
+  --panel: rgba(10, 22, 44, 0.62);
+  --panel-2: rgba(8, 18, 38, 0.72);
+  --input-bg: rgba(4, 12, 28, 0.72);
+  --thead-bg: rgba(4, 12, 28, 0.5);
+  --ghost-bg: rgba(255, 255, 255, 0.03);
+  --row-hover: rgba(34, 211, 238, 0.05);
+  --page-from: #061024;
+  --page-to: #03060f;
+  --sidebar-bg: linear-gradient(180deg, rgba(8, 20, 42, 0.9), rgba(5, 12, 28, 0.86));
+  --topbar-bg: rgba(6, 14, 30, 0.6);
+  --glow-cyan: rgba(34, 211, 238, 0.34);
+  --glow-violet: rgba(139, 92, 246, 0.28);
+  --card-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+  --accent-hover: rgba(34, 211, 238, 0.45);
+  --corner: rgba(34, 211, 238, 0.5);
+  --stat-from: #7dd3fc;
+  --btn-primary-fg: #03121f;
+  --scroll-thumb: rgba(120, 190, 255, 0.16);
+  --scroll-thumb-hover: rgba(120, 190, 255, 0.3);
+
+  /* ---------- 标签配色 ---------- */
+  --tag-cyan-fg: #7dd3fc;
+  --tag-cyan-bg: rgba(34, 211, 238, 0.12);
+  --tag-cyan-bd: rgba(34, 211, 238, 0.32);
+  --tag-green-fg: #6ee7b7;
+  --tag-green-bg: rgba(52, 211, 153, 0.12);
+  --tag-green-bd: rgba(52, 211, 153, 0.32);
+  --tag-amber-fg: #fcd34d;
+  --tag-amber-bg: rgba(251, 191, 36, 0.12);
+  --tag-amber-bd: rgba(251, 191, 36, 0.32);
+  --tag-red-fg: #fca5a5;
+  --tag-red-bg: rgba(248, 113, 113, 0.12);
+  --tag-red-bd: rgba(248, 113, 113, 0.32);
+  --tag-violet-fg: #c4b5fd;
+  --tag-violet-bg: rgba(139, 92, 246, 0.12);
+  --tag-violet-bd: rgba(139, 92, 246, 0.32);
+  --tag-grey-fg: rgba(230, 241, 255, 0.55);
+  --tag-grey-bg: rgba(255, 255, 255, 0.06);
+  --tag-grey-bd: rgba(120, 190, 255, 0.14);
+
+  /* ---------- Element Plus 组件跟随本项目主题 ----------
+     弹层、下拉、消息提示这些组件默认是浅色的，在深色主题下会很突兀。
+     覆盖 EL 自己的 CSS 变量，让它们用同一套调色板。 */
+  --el-bg-color: #0b1830;
+  --el-bg-color-overlay: #0d1c36;
+  --el-text-color-primary: var(--text);
+  --el-text-color-regular: var(--text-2);
+  --el-text-color-secondary: var(--muted);
+  --el-border-color: var(--line-strong);
+  --el-border-color-light: var(--line);
+  --el-border-color-lighter: var(--line);
+  --el-fill-color-blank: var(--input-bg);
+  --el-fill-color-light: var(--ghost-bg);
+  --el-mask-color: rgba(2, 6, 16, 0.7);
+}
+
+/* ================= 浅色主题 ================= */
+[data-theme='light'] {
+  /* 强调色在浅底上要压深一些，否则发飘、看不清 */
+  --cyan: #06b6d4;
+  --blue: #2563eb;
+  --violet: #7c3aed;
+  --green: #059669;
+  --amber: #d97706;
+  --red: #dc2626;
+
+  --text: #0f2740;
+  --text-2: rgba(15, 39, 64, 0.76);
+  --muted: rgba(15, 39, 64, 0.52);
+  --code-fg: #0e7490;
+  --link: rgba(37, 99, 235, 0.9);
+  --danger-link: rgba(220, 38, 38, 0.85);
+
+  --line: rgba(15, 80, 140, 0.14);
+  --line-strong: rgba(15, 80, 140, 0.24);
+
+  --panel: rgba(255, 255, 255, 0.84);
+  --panel-2: rgba(255, 255, 255, 0.95);
+  --input-bg: rgba(255, 255, 255, 0.92);
+  --thead-bg: rgba(236, 245, 253, 0.9);
+  --ghost-bg: rgba(15, 80, 140, 0.04);
+  --row-hover: rgba(6, 182, 212, 0.07);
+  --page-from: #e8f1fb;
+  --page-to: #f7fafd;
+  --sidebar-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(238, 245, 252, 0.9));
+  --topbar-bg: rgba(255, 255, 255, 0.72);
+  --glow-cyan: rgba(34, 211, 238, 0.16);
+  --glow-violet: rgba(139, 92, 246, 0.12);
+  --card-shadow: 0 14px 36px rgba(31, 78, 121, 0.1);
+  --accent-hover: rgba(6, 182, 212, 0.5);
+  --corner: rgba(6, 182, 212, 0.45);
+  --stat-from: #0891b2;
+  --btn-primary-fg: #ffffff;
+  --scroll-thumb: rgba(15, 80, 140, 0.18);
+  --scroll-thumb-hover: rgba(15, 80, 140, 0.32);
+
+  --tag-cyan-fg: #0e7490;
+  --tag-green-fg: #047857;
+  --tag-amber-fg: #b45309;
+  --tag-red-fg: #b91c1c;
+  --tag-violet-fg: #6d28d9;
+  --tag-grey-fg: rgba(15, 39, 64, 0.6);
+  --tag-grey-bg: rgba(15, 80, 140, 0.06);
+  --tag-grey-bd: rgba(15, 80, 140, 0.14);
+
+  /* Element Plus 在浅色下本就是浅色，这里只是把文字与描边对齐本项目的调色板 */
+  --el-bg-color: #ffffff;
+  --el-bg-color-overlay: #ffffff;
+  --el-text-color-primary: var(--text);
+  --el-text-color-regular: var(--text-2);
+  --el-text-color-secondary: var(--muted);
+  --el-border-color: var(--line-strong);
+  --el-border-color-light: var(--line);
+  --el-border-color-lighter: var(--line);
+  --el-fill-color-blank: var(--input-bg);
+  --el-fill-color-light: var(--ghost-bg);
+  --el-mask-color: rgba(15, 39, 64, 0.35);
+}
+
+/* ---------- 卡片 ---------- */
+.card {
+  position: relative;
+  border-radius: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+
+.card::before,
+.card::after {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--corner);
+  pointer-events: none;
+}
+
+.card::before {
+  top: -1px;
+  left: -1px;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 16px 0 0 0;
+}
+
+.card::after {
+  bottom: -1px;
+  right: -1px;
+  border-left: 0;
+  border-top: 0;
+  border-radius: 0 0 16px 0;
+}
+
+.card__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.card__title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+
+.card__title small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+
+.card__tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ---------- 指标卡 ---------- */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.stat {
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(10px);
+  transition: border-color 0.3s, transform 0.3s;
+}
+
+.stat:hover {
+  border-color: var(--accent-hover);
+  transform: translateY(-3px);
+}
+
+.stat__label {
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.6px;
+}
+
+.stat__value {
+  margin-top: 6px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: linear-gradient(100deg, var(--stat-from), var(--cyan));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.stat__value.is-violet {
+  background: linear-gradient(100deg, #c4b5fd, var(--violet));
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+.stat__value.is-green {
+  background: linear-gradient(100deg, var(--tag-green-fg), var(--green));
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+/* ---------- 按钮 ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-family: inherit;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: transform 0.22s, box-shadow 0.22s, filter 0.22s, background 0.22s, border-color 0.22s, color 0.22s;
+}
+
+.btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.btn--primary {
+  color: var(--btn-primary-fg);
+  font-weight: 600;
+  background: linear-gradient(120deg, var(--cyan), var(--blue) 65%, var(--violet));
+  box-shadow: 0 8px 22px rgba(34, 211, 238, 0.26);
+}
+
+.btn--primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(34, 211, 238, 0.4);
+  filter: brightness(1.06);
+}
+
+.btn--ghost {
+  color: var(--text-2);
+  background: rgba(34, 211, 238, 0.06);
+  border-color: var(--line-strong);
+}
+
+.btn--ghost:hover {
+  color: var(--cyan);
+  border-color: var(--accent-hover);
+  background: rgba(34, 211, 238, 0.1);
+}
+
+/* 图标按钮（顶栏的主题切换用） */
+.btn--icon {
+  width: 36px;
+  padding: 0;
+  justify-content: center;
+  color: var(--text-2);
+  background: var(--ghost-bg);
+  border-color: var(--line);
+}
+
+.btn--icon:hover {
+  color: var(--cyan);
+  border-color: var(--accent-hover);
+}
+
+.btn--icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* ---------- 搜索框 ---------- */
+/* 筛选栏里的日期区间：Element 默认太宽，会把筛选栏挤到第二行 */
+.filter-range {
+  width: 330px;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 13px;
+  height: 36px;
+  border-radius: 9px;
+  background: var(--input-bg);
+  border: 1px solid var(--line-strong);
+  transition: border-color 0.25s, box-shadow 0.25s;
+}
+
+.search:focus-within {
+  border-color: var(--accent-hover);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.12);
+}
+
+.search svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--muted);
+}
+
+.search input {
+  width: 200px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  background: none;
+  border: 0;
+  outline: none;
+}
+
+.search input::placeholder {
+  color: var(--muted);
+}
+
+/* ---------- 表格 ---------- */
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table-wrap thead th {
+  padding: 13px 20px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+  background: var(--thead-bg);
+  white-space: nowrap;
+}
+
+.table-wrap tbody td {
+  padding: 14px 20px;
+  font-size: 13.5px;
+  color: var(--text-2);
+  border-top: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.table-wrap tbody tr {
+  transition: background 0.2s;
+}
+
+.table-wrap tbody tr:hover {
+  background: var(--row-hover);
+}
+
+.code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--code-fg);
+  letter-spacing: 0.4px;
+}
+
+.strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* ---------- 状态标签 ---------- */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  letter-spacing: 0.3px;
+}
+
+.tag::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 7px currentColor;
+}
+
+.tag--cyan { color: var(--tag-cyan-fg); background: var(--tag-cyan-bg); border: 1px solid var(--tag-cyan-bd); }
+.tag--green { color: var(--tag-green-fg); background: var(--tag-green-bg); border: 1px solid var(--tag-green-bd); }
+.tag--amber { color: var(--tag-amber-fg); background: var(--tag-amber-bg); border: 1px solid var(--tag-amber-bd); }
+.tag--red { color: var(--tag-red-fg); background: var(--tag-red-bg); border: 1px solid var(--tag-red-bd); }
+.tag--violet { color: var(--tag-violet-fg); background: var(--tag-violet-bg); border: 1px solid var(--tag-violet-bd); }
+.tag--grey { color: var(--tag-grey-fg); background: var(--tag-grey-bg); border: 1px solid var(--tag-grey-bd); }
+
+/* ---------- 行操作 ---------- */
+.ops {
+  display: flex;
+  gap: 14px;
+}
+
+.op {
+  font-size: 13px;
+  color: var(--link);
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.op:hover {
+  color: var(--cyan);
+}
+
+.op--danger {
+  color: var(--danger-link);
+}
+
+.op--danger:hover {
+  color: var(--red);
+}
+
+/* ---------- 分页 ---------- */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 20px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.pager__pages {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.pager__btn {
+  min-width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  background: var(--ghost-bg);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.pager__btn:hover {
+  color: var(--cyan);
+  border-color: var(--accent-hover);
+}
+
+.pager__btn.is-active {
+  color: var(--btn-primary-fg);
+  font-weight: 600;
+  background: linear-gradient(120deg, var(--cyan), var(--blue));
+  border-color: transparent;
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.4);
+}
+
+/* ---------- 滚动条 ---------- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+}
